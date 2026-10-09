@@ -1,0 +1,14 @@
+{
+  "name": "neon-draw",
+  "version": "2.2.0",
+  "private": true,
+  "description": "Layered painting app that runs in the browser — open index.html.",
+  "scripts": {
+    "lint": "eslint js",
+    "build-single": "python tools/build-single.py"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.0",
+    "globals": "^16.0.0"
+  }
+}

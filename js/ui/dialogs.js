@@ -1,0 +1,222 @@
+/* Neon Draw — modal dialogs. */
+'use strict';
+(function () {
+  const U = ND.U, h = U.h, C = ND.C, App = ND.App;
+  const D = {};
+
+  D.modal = function (title, body, buttons, o) {
+    o = o || {};
+    D.close();
+    const btnRow = h('div.nd-modal-btns');
+    const box = h('div.nd-modal' + (o.wide ? '.wide' : ''), { role: 'dialog', 'aria-label': title }, h('div.nd-modal-head', h('h3', title), C.iconButton('close', 'Close (Esc)', () => { if (o.onCancel) o.onCancel(); D.close(); }, 'tiny')), h('div.nd-modal-body', body), btnRow);
+    const back = h('div.nd-modal-back', box);
+    back.addEventListener('pointerdown', (e) => { if (e.target === back) { if (o.onCancel) o.onCancel(); D.close(); } });
+    (buttons || []).forEach((b) => {
+      const btn = C.button(b.label, () => { const r = b.action ? b.action() : null; if (r !== false) D.close(); }, { cls: b.primary ? 'primary' : '' });
+      btnRow.appendChild(btn);
+    });
+    box.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Escape') { if (o.onCancel) o.onCancel(); D.close(); }
+      if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA' && e.target.tagName !== 'BUTTON') { const p = (buttons || []).find((b) => b.primary); if (p) { const r = p.action ? p.action() : null; if (r !== false) D.close(); } }
+    });
+    document.body.appendChild(back);
+    D.current = back;
+    setTimeout(() => { const f = box.querySelector('input,select,textarea'); if (f && !o.noFocus) f.focus(); else box.tabIndex = -1, box.focus(); }, 30);
+    return box;
+  };
+  D.close = function () { if (D.current) { D.current.remove(); D.current = null; } };
+  D.isOpen = () => !!D.current;
+
+  const num = (val, o) => { const i = h('input.nd-field', Object.assign({ type: 'number', value: val }, o || {})); return i; };
+  const field = (label, input, suffix) => h('label.nd-field-row', h('span', label), input, suffix ? h('span.nd-unit', suffix) : null);
+
+  // Ask for a number. Resolves to a number or null.
+  D.number = function (title, label, def, min, max, suffix) {
+    return new Promise((res) => {
+      const i = num(def, { min, max });
+      D.modal(title, field(label, i, suffix), [{ label: 'Cancel', action: () => res(null) }, { label: 'OK', primary: true, action: () => { const v = parseFloat(i.value); res(isNaN(v) ? null : U.clamp(v, min, max)); } }], { onCancel: () => res(null) });
+    });
+  };
+
+  /* ---------------- new document ---------------- */
+  D.newDoc = function () {
+    const PRESETS = [
+      ['Full HD', 1920, 1080], ['4K UHD', 3840, 2160], ['Square', 2048, 2048], ['Instagram post', 1080, 1350], ['Phone wallpaper', 1170, 2532],
+      ['A4 @300ppi', 2480, 3508], ['A5 @300ppi', 1748, 2480], ['US Letter @300ppi', 2550, 3300], ['Comic page', 2063, 3131], ['Postcard', 1800, 1200],
+      ['Texture 1K', 1024, 1024], ['Texture 2K', 2048, 2048], ['Pixel art 64', 64, 64], ['Pixel art 128', 128, 128], ['Icon 512', 512, 512], ['YouTube thumbnail', 1280, 720],
+    ];
+    const name = h('input.nd-field', { type: 'text', value: 'Untitled' });
+    const w = num(1920, { min: 1, max: 16384 }), hh = num(1080, { min: 1, max: 16384 });
+    let bgMode = 'white';
+    const bgCol = C.colourInput(() => '#f4efe6', () => {}, 'Custom background colour');
+    const bgSeg = C.segmented([['white', 'White'], ['transparent', 'Transparent'], ['bg', 'BG colour'], ['custom', 'Custom']], () => bgMode, (v) => { bgMode = v; });
+    const chips = h('div.nd-preset-chips');
+    PRESETS.forEach(([n, pw, ph]) => {
+      const b = h('button.nd-chipbtn', { type: 'button', title: pw + ' × ' + ph }, n);
+      b.addEventListener('click', () => { w.value = pw; hh.value = ph; chips.querySelectorAll('.nd-chipbtn').forEach((q) => q.classList.toggle('active', q === b)); info(); });
+      chips.appendChild(b);
+    });
+    const swapB = C.button('⇄ Portrait / landscape', () => { const t = w.value; w.value = hh.value; hh.value = t; info(); }, { cls: 'sm' });
+    const inf = h('div.nd-hint');
+    const info = () => { const mp = (w.value * hh.value) / 1e6; inf.textContent = (+w.value) + ' × ' + (+hh.value) + ' px · ' + mp.toFixed(1) + ' MP · about ' + U.fmtBytes(w.value * hh.value * 4) + ' per layer' + (mp > 20 ? ' — large canvases are slower' : ''); };
+    w.addEventListener('input', info); hh.addEventListener('input', info);
+    info();
+    D.modal('New document', h('div', chips, field('Name', name), h('div.nd-row', field('Width', w, 'px'), field('Height', hh, 'px'), swapB), inf, h('div.nd-row', h('span.nd-lbl', 'Background'), bgSeg, bgCol)), [
+      { label: 'Cancel' },
+      { label: 'Create', primary: true, action: () => {
+        const W = U.clamp(Math.round(+w.value || 1920), 1, 16384), H = U.clamp(Math.round(+hh.value || 1080), 1, 16384);
+        const bg = bgMode === 'white' ? '#ffffff' : bgMode === 'transparent' ? null : bgMode === 'bg' ? App.state.bg : bgCol.value;
+        App.newDocument(W, H, bg, name.value || 'Untitled');
+      } },
+    ], { wide: true });
+  };
+
+  /* ---------------- scale image / canvas size ---------------- */
+  D.scaleImage = function () {
+    const d = App.doc, w = num(d.width, { min: 1, max: 16384 }), hh = num(d.height, { min: 1, max: 16384 }), p = num(100, { min: 1, max: 1000 });
+    const keep = C.check('Keep aspect ratio', () => true, () => {});
+    const box = () => keep.querySelector('input').checked;
+    w.addEventListener('input', () => { if (box()) hh.value = Math.round((w.value * d.height) / d.width); p.value = Math.round((w.value / d.width) * 1000) / 10; });
+    hh.addEventListener('input', () => { if (box()) w.value = Math.round((hh.value * d.width) / d.height); });
+    p.addEventListener('input', () => { w.value = Math.round((d.width * p.value) / 100); hh.value = Math.round((d.height * p.value) / 100); });
+    D.modal('Scale image', h('div', field('Width', w, 'px'), field('Height', hh, 'px'), field('Scale', p, '%'), keep, h('div.nd-hint', 'Resamples every layer. Use Image ▸ Canvas size to add space instead.')), [
+      { label: 'Cancel' }, { label: 'Scale', primary: true, action: () => App.scaleImage(U.clamp(+w.value, 1, 16384), U.clamp(+hh.value, 1, 16384)) },
+    ]);
+  };
+  D.canvasSize = function () {
+    const d = App.doc, w = num(d.width, { min: 1, max: 16384 }), hh = num(d.height, { min: 1, max: 16384 });
+    let ax = 0.5, ay = 0.5;
+    const grid = h('div.nd-anchor');
+    const draw = () => grid.querySelectorAll('button').forEach((b) => b.classList.toggle('active', +b.dataset.x === ax && +b.dataset.y === ay));
+    for (let j = 0; j < 3; j++) for (let i = 0; i < 3; i++) {
+      const b = h('button', { type: 'button', title: 'Anchor' });
+      b.dataset.x = i / 2; b.dataset.y = j / 2;
+      b.addEventListener('click', () => { ax = i / 2; ay = j / 2; draw(); });
+      grid.appendChild(b);
+    }
+    draw();
+    D.modal('Canvas size', h('div.nd-row', h('div', field('Width', w, 'px'), field('Height', hh, 'px')), h('div', h('div.nd-mini-title', 'Anchor'), grid)), [
+      { label: 'Cancel' }, { label: 'Resize canvas', primary: true, action: () => App.canvasSize(U.clamp(+w.value, 1, 16384), U.clamp(+hh.value, 1, 16384), ax, ay) },
+    ]);
+  };
+
+  /* ---------------- filter with live preview ---------------- */
+  D.filter = function (id) {
+    const d = App.doc, f = ND.Filters.byId(id);
+    if (!d.canPaint()) return App.blocked();
+    if (!f.params.length) return App.applyFilter(id, {});
+    const S = d.surface(), L = { canvas: S.canvas }, original = U.clone(S.canvas), vals = {};
+    const touched = () => { if (S.kind !== 'pixels') ND.DocMask.markMask(S.canvas); };
+    f.params.forEach((p) => { vals[p.key] = App.lastFilter && App.lastFilter.id === id ? App.lastFilter.params[p.key] : p.def; });
+    let preview = true;
+    const restore = () => { const x = U.ctx(L.canvas); x.clearRect(0, 0, d.width, d.height); x.drawImage(original, 0, 0); touched(); d.invalidateAll(); };
+    const run = U.debounce(() => {
+      if (!preview) { restore(); return; }
+      const out = ND.Filters.run(id, original, vals, { fg: App.state.fg, bg: App.state.bg }), x = U.ctx(L.canvas);
+      x.clearRect(0, 0, d.width, d.height);
+      if (d.selectionMask) {
+        const keep = U.clone(original), kx = U.ctx(keep); kx.globalCompositeOperation = 'destination-out'; kx.drawImage(d.selectionMask, 0, 0);
+        const ox = U.ctx(out); ox.globalCompositeOperation = 'destination-in'; ox.drawImage(d.selectionMask, 0, 0);
+        x.drawImage(keep, 0, 0);
+      }
+      x.drawImage(out, 0, 0);
+      touched();
+      d.invalidateAll();
+      ND.View.request();
+    }, d.width * d.height > 4e6 ? 350 : 120);
+    const ctrls = f.params.map((p) => p.type === 'check'
+      ? C.check(p.label, () => !!vals[p.key], (v) => { vals[p.key] = v ? 1 : 0; run(); })
+      : C.slider(p.label, { min: p.min, max: p.max, step: p.step, get: () => vals[p.key], set: (v) => { vals[p.key] = v; run(); }, wide: true }));
+    const prev = C.check('Preview', () => preview, (v) => { preview = v; run(); });
+    const reset = C.button('Defaults', () => { f.params.forEach((p) => { vals[p.key] = p.def; }); ctrls.forEach((c) => c.refresh()); run(); }, { cls: 'sm' });
+    D.modal(f.label, h('div.nd-filter', ...ctrls, h('div.nd-row.space', prev, reset), d.selectionMask ? h('div.nd-hint', 'Applies inside the selection only.') : null), [
+      { label: 'Cancel', action: () => restore() },
+      { label: 'Apply', primary: true, action: () => { restore(); App.applyFilter(id, Object.assign({}, vals)); } },
+    ], { onCancel: restore, noFocus: true });
+    run();
+  };
+
+  /* ---------------- stamp picker ---------------- */
+  D.stampPicker = function () {
+    let cat = 'All', q = '';
+    const chips = h('div.nd-chips'), grid = h('div.nd-stampgrid');
+    const search = h('input.nd-search', { type: 'search', placeholder: 'Search stamps…' });
+    search.addEventListener('input', () => { q = search.value.toLowerCase(); renderGrid(); });
+    const fileIn = h('input', { type: 'file', accept: 'image/*', style: { display: 'none' } });
+    fileIn.addEventListener('change', async () => { if (fileIn.files[0]) { await App.importStampImage(fileIn.files[0]); renderChips(); renderGrid(); } });
+    const renderChips = () => {
+      U.clear(chips);
+      ['All'].concat(ND.Stamps.cats()).forEach((c) => {
+        const b = h('button.nd-chipbtn' + (c === cat ? '.active' : ''), { type: 'button' }, c);
+        b.addEventListener('click', () => { cat = c; renderChips(); renderGrid(); });
+        chips.appendChild(b);
+      });
+    };
+    const renderGrid = () => {
+      U.clear(grid);
+      ND.Stamps.all().filter((s) => (cat === 'All' || s.cat === cat) && (!q || s.name.toLowerCase().includes(q))).forEach((s) => {
+        const c = U.canvas(64, 64), img = ND.Stamps.render(s.name, 64, App.state.stampMode, App.state.fg);
+        if (img) U.ctx(c).drawImage(img, 0, 0, 64, 64);
+        const t = h('button.nd-stamptile' + (s.name === App.state.stamp ? '.active' : ''), { type: 'button', title: s.name }, c, h('span', s.name));
+        t.addEventListener('click', () => { App.state.stamp = s.name; App.savePrefsSoon(); if (App.state.tool !== 'stamp') App.setTool('stamp'); else ND.Toolbar.renderOptions(); D.close(); });
+        if (s.user) {
+          const del = h('span.nd-preset-del', { title: 'Delete stamp' }, '×');
+          del.addEventListener('click', (e) => { e.stopPropagation(); ND.Stamps.removeUser(s.name); App.saveUserStamps(); renderChips(); renderGrid(); });
+          t.appendChild(del);
+        }
+        grid.appendChild(t);
+      });
+    };
+    renderChips(); renderGrid();
+    D.modal('Choose a stamp', h('div', chips, h('div.nd-row', search, C.button('Import image…', () => fileIn.click(), { cls: 'sm' }), C.button('From selection', () => { D.close(); App.stampFromSelection(); }, { cls: 'sm' }), fileIn), grid), [{ label: 'Close' }], { wide: true, noFocus: true });
+  };
+
+  /* ---------------- help ---------------- */
+  D.help = function () {
+    const rows = [
+      ['B · E', 'Brush · toggle eraser mode (eraser remembers its own size)'], ['V U O N', 'Line · Rectangle · Ellipse · Polygon/star'], ['F · G', 'Fill · Gradient'],
+      ['Y · S', 'Text · Stamp (S again opens the stamp library)'], ['R · L · Shift+L · W', 'Rect select · Lasso · Polygon lasso · Magic wand'], ['A', 'Quick select — paint over an object, the selection snaps to its edges (Alt removes)'],
+      ['T · K · C · P', 'Move · Transform · Crop · Colour sampler'], ['H · Z', 'Pan · Zoom'], ['J', 'Spot healing brush'],
+      ['Q', 'Quick mask — paint a selection, Q again to finish'], ['\\', 'Switch between painting the layer and its mask'], ['Ctrl+R', 'Rulers (drag from a ruler to make a guide)'],
+      ['Shift+Backspace', 'Content-aware fill of the selection'],
+      ['[ ]', 'Brush size down / up (Shift: softness)'], ['Shift+drag', 'Resize the brush on the canvas'], ['Shift+click', 'Straight line from the last stroke'],
+      ['Ctrl/Alt+click', 'Pick colour while painting (sets clone source with the clone tool)'], ['Right-click', 'Pick colour'], ['Alt+wheel', 'Brush size'],
+      ['X · D', 'Swap colours · black & white'], ['1 · 2 · 3', 'Fit · 100% · 200%'], ['4 · 5 · 6', 'Rotate view left · reset · right'], ['M', 'Mirror view'],
+      ['Space+drag', 'Pan from any tool (Shift+Space+drag rotates)'], ['Tab', 'Hide / show panels'], ['F11', 'Full screen'],
+      ['Ctrl+Z · Ctrl+Shift+Z / Ctrl+Y', 'Undo · redo'], ['Ctrl+C · X · V', 'Copy · cut · paste (works with other apps)'], ['Ctrl+Shift+C', 'Copy merged'],
+      ['Ctrl+A · Ctrl+D · Ctrl+Shift+I', 'Select all · deselect · invert'], ['Delete', 'Clear the selection'], ['Alt+Backspace · Ctrl+Backspace', 'Fill with FG · BG'],
+      ['Ctrl+Shift+N · Ctrl+J · Ctrl+E', 'New layer · layer via copy · merge down'], ['Ctrl+G · Ctrl+Shift+G', 'Group · ungroup'], ['Ctrl+Alt+G', 'Clipping mask'],
+      ['Ctrl+T', 'Transform'], ['Ctrl+F', 'Repeat the last filter'], ['Ctrl+N · O · S', 'New · open · save project'], ['Ctrl+Shift+S', 'Export PNG'],
+      ['Arrow keys', 'Nudge layer with the Move tool (Shift ×10)'], ['Enter · Esc', 'Apply · cancel transforms, crops, curves and text'],
+      ['Two-finger tap', 'Undo (touch screens)'], ['Pinch', 'Zoom & pan'],
+    ];
+    D.modal('Neon Draw — shortcuts & tips', h('div', h('div.nd-help-grid', ...rows.flatMap(([k, v]) => [h('kbd', k), h('span', v)])),
+      h('p.nd-hint', 'Graphics tablets: pressure, tilt and the pen eraser end are supported. Your work autosaves in this browser every 30 seconds, and projects (.ndraw) keep layers. Use File ▸ Export for PNG, JPEG, WebP, layered PSD or OpenRaster (.ora, opens in Krita/GIMP). File ▸ Open reads Photoshop .psd files with their layers, groups and masks.')), [{ label: 'Close', primary: true }], { wide: true, noFocus: true });
+  };
+  D.about = function () {
+    D.modal('About Neon Draw', h('div', h('p', 'Neon Draw is a layered painting app that runs entirely in your browser — no install and no uploads. Open index.html from disk or put the folder on any web host.'),
+      h('p.nd-hint', ND.Adjust.KINDS.length + ' adjustment & fill layers · ' + Object.keys(ND.Effects.LABELS).length + ' layer effects · ' + ND.Presets.LIST.length + ' brush presets · ' + ND.Brush.ENGINES.length + ' brush engines · ' + ND.Tips.list.length + ' tips · ' + ND.Textures.list.length + ' paper textures · ' + ND.Patterns.SPRITES.length + ' scatter patterns · ' + ND.Patterns.TILES.length + ' tiling patterns · ' + ND.Stamps.list.length + ' stamps · ' + ND.Filters.list.length + ' filters · ' + ND.Blend.MODES.length + ' blend modes')), [{ label: 'Close', primary: true }]);
+  };
+  D.installHelp = function (fromDisk) {
+    const steps = fromDisk
+      ? [h('p', 'This copy of Neon Draw is running from a file (from disk, or the single-file version). That works fine, but browsers only install apps from a website.'),
+        h('p', 'Upload the folder to GitHub Pages (see DEPLOY.md) or any web host, open it there, and an “Install app” button appears in the top bar.')]
+      : [h('p', 'Your browser has not offered installation yet. You can usually install from its menu:'),
+        h('ul.nd-list',
+          h('li', h('b', 'Chrome / Edge (Windows, Mac, Linux, Android): '), 'the install icon at the right of the address bar, or menu ⋮ ▸ “Install Neon Draw” / “Apps ▸ Install this site as an app”.'),
+          h('li', h('b', 'Safari on iPhone / iPad: '), 'Share button ▸ “Add to Home Screen”.'),
+          h('li', h('b', 'Safari on Mac: '), 'File ▸ “Add to Dock”.'),
+          h('li', h('b', 'Firefox: '), 'desktop Firefox can’t install web apps, but Neon Draw still works offline in a tab after the first visit.')),
+        h('p.nd-hint', 'Installed, it opens in its own window, works without internet, and can open .ndraw, .psd, .ora and image files directly.')];
+    D.modal('Install Neon Draw', h('div', ...steps), [{ label: 'Close', primary: true }], { noFocus: true });
+  };
+  D.recovered = function (doc) {
+    D.modal('Welcome back', h('p', 'Your last session (“' + doc.name + '”, ' + doc.width + ' × ' + doc.height + ') was restored from autosave.'), [
+      { label: 'Start a new document', action: () => { setTimeout(() => D.newDoc(), 0); } },
+      { label: 'Keep working', primary: true },
+    ], { noFocus: true });
+  };
+
+  ND.Dialogs = D;
+})();

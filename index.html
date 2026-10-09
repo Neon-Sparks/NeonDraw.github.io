@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#141519" />
+  <title>Neon Draw — Paint in Your Browser</title>
+  <meta name="description" content="Neon Draw — layered painting and photo editing in your browser. Works offline and installs as an app." />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Neon Draw" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="icon" type="image/png" sizes="48x48" href="icons/favicon-48.png" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="stylesheet" href="css/app.css" />
+</head>
+<body class="nd-loading">
+  <div id="nd-app">
+    <header class="nd-menubar">
+      <span class="nd-logo">Neon<b>Draw</b></span>
+      <nav id="nd-menus" class="nd-menus"></nav>
+      <div class="nd-menubar-right">
+        <button id="nd-docname" class="nd-docname" type="button" title="Click to rename the document"></button>
+        <button id="nd-undo" class="nd-ibtn" type="button" title="Undo (Ctrl+Z)"></button>
+        <button id="nd-redo" class="nd-ibtn" type="button" title="Redo (Ctrl+Shift+Z)"></button>
+      </div>
+    </header>
+    <div id="nd-options" class="nd-options"></div>
+    <main class="nd-main">
+      <aside id="nd-toolbox" class="nd-toolbox" aria-label="Tools"></aside>
+      <section id="nd-viewport" class="nd-viewport">
+        <div id="nd-toast" class="nd-toast" role="status"></div>
+        <div class="nd-drop-hint">Drop images to add them as layers · drop a .ndraw / .ora to open it</div>
+      </section>
+      <aside id="nd-dock" class="nd-dock" aria-label="Panels">
+        <div id="nd-dock-resize" class="nd-dock-resize" title="Drag to resize the panels"></div>
+        <div id="nd-dock-scroll" class="nd-dock-scroll"></div>
+        <div id="nd-dock-layers" class="nd-dock-layers"></div>
+      </aside>
+    </main>
+    <footer id="nd-status" class="nd-status"></footer>
+  </div>
+  <input id="nd-open" type="file" accept="image/*,.ndraw,.pigment,.ora,.psd,.psb,application/json" hidden />
+  <input id="nd-import" type="file" accept="image/*" multiple hidden />
+  <noscript><p style="color:#fff;padding:2em">Neon Draw needs JavaScript enabled.</p></noscript>
+
+  <!-- Plain scripts (no modules) so the app also runs when index.html is opened straight from disk. Order matters. -->
+  <script src="js/util.js"></script>
+  <script src="js/icons.js"></script>
+  <script src="js/blend.js"></script>
+  <script src="js/document.js"></script>
+  <script src="js/effects.js"></script>
+  <script src="js/adjust.js"></script>
+  <script src="js/filters.js"></script>
+  <script src="js/selection.js"></script>
+  <script src="js/textures.js"></script>
+  <script src="js/tips.js"></script>
+  <script src="js/patterns.js"></script>
+  <script src="js/stamps.js"></script>
+  <script src="js/heal.js"></script>
+  <script src="js/smartsel.js"></script>
+  <script src="js/engine.js"></script>
+  <script src="js/presets.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/psd.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/app.js"></script>
+  <script src="js/viewport.js"></script>
+  <script src="js/tools2.js"></script>
+  <script src="js/ui/controls.js"></script>
+  <script src="js/ui/toolbar.js"></script>
+  <script src="js/ui/colour.js"></script>
+  <script src="js/ui/brushes.js"></script>
+  <script src="js/ui/layers.js"></script>
+  <script src="js/ui/adjustpanel.js"></script>
+  <script src="js/ui/dialogs.js"></script>
+  <script src="js/ui/menus.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

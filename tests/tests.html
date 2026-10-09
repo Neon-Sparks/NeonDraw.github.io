@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Neon Draw — tests</title>
+  <style>
+    body { background: #141519; color: #e1e3e8; font: 13px/1.5 system-ui, sans-serif; padding: 20px; }
+    h1 { font-size: 18px; } .pass { color: #6fdc8c; } .fail { color: #ff6b6b; } .sum { font-size: 15px; margin: 12px 0; }
+    li { margin: 2px 0; } code { color: #9fc7ff; }
+  </style>
+</head>
+<body>
+  <h1>Neon Draw — self tests</h1>
+  <p>Open this file in a browser (double-click works). It exercises the engine without the UI.</p>
+  <div class="sum" id="sum">Running…</div>
+  <ul id="out"></ul>
+  <script src="../js/util.js"></script>
+  <script src="../js/icons.js"></script>
+  <script src="../js/blend.js"></script>
+  <script src="../js/document.js"></script>
+  <script src="../js/effects.js"></script>
+  <script src="../js/adjust.js"></script>
+  <script src="../js/filters.js"></script>
+  <script src="../js/selection.js"></script>
+  <script src="../js/textures.js"></script>
+  <script src="../js/tips.js"></script>
+  <script src="../js/patterns.js"></script>
+  <script src="../js/stamps.js"></script>
+  <script src="../js/heal.js"></script>
+  <script src="../js/smartsel.js"></script>
+  <script src="../js/engine.js"></script>
+  <script src="../js/presets.js"></script>
+  <script src="../js/storage.js"></script>
+  <script src="../js/psd.js"></script>
+  <script src="../js/render.js"></script>
+  <script>
+  'use strict';
+  (async function () {
+    const U = ND.U, out = document.getElementById('out');
+    let pass = 0, fail = 0;
+    const log = (ok, name, msg) => { const li = document.createElement('li'); li.className = ok ? 'pass' : 'fail'; li.textContent = (ok ? '✔ ' : '✘ ') + name + (msg ? ' — ' + msg : ''); out.appendChild(li); ok ? pass++ : fail++; };
+    async function test(name, fn) { try { const r = await fn(); log(r !== false, name, typeof r === 'string' ? r : ''); } catch (e) { log(false, name, e.message); console.error(e); } }
+    const px = (c, x, y) => Array.from(U.ctx(c).getImageData(x, y, 1, 1).data);
+    const near = (a, b, t) => a.every((v, i) => Math.abs(v - b[i]) <= (t || 2));
+    const assert = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
+
+    await test('colour conversions round-trip', () => {
+      for (const hex of ['#000000', '#ffffff', '#3fa7ff', '#d63a2f', '#7a1c1c']) {
+        const [r, g, b] = U.hexToRgb(hex);
+        assert(U.rgbToHex(...U.hsvToRgb(...U.rgbToHsv(r, g, b))) === hex, 'hsv ' + hex);
+        assert(U.rgbToHex(...U.hslToRgb(...U.rgbToHsl(r, g, b))) === hex, 'hsl ' + hex);
+      }
+    });
+    await test('JS blend modes match the browser for native modes', () => {
+      const a = U.canvas(1, 1), b = U.canvas(1, 1);
+      for (const m of ['multiply', 'screen', 'overlay', 'darken', 'lighten', 'difference', 'exclusion', 'hardlight']) {
+        const ax = U.ctx(a); ax.globalCompositeOperation = 'source-over'; ax.clearRect(0, 0, 1, 1); ax.fillStyle = 'rgb(200,80,40)'; ax.fillRect(0, 0, 1, 1);
+        const d1 = ax.getImageData(0, 0, 1, 1), s1 = new ImageData(new Uint8ClampedArray([60, 150, 220, 255]), 1, 1);
+        ND.Blend.blendImageData(d1, s1, m, 1);
+        const bx = U.ctx(b); bx.globalCompositeOperation = 'source-over'; bx.fillStyle = 'rgb(200,80,40)'; bx.fillRect(0, 0, 1, 1);
+        bx.globalCompositeOperation = ND.Blend.NATIVE[m]; bx.fillStyle = 'rgb(60,150,220)'; bx.fillRect(0, 0, 1, 1);
+        assert(near(Array.from(d1.data), px(b, 0, 0), 3), m + ' differs');
+      }
+    });
+    await test('layers, groups, clipping mask composite', () => {
+      const d = new ND.Doc(100, 100, '#ffffff');
+      const L = d.addLayer('red'); U.ctx(L.canvas).fillStyle = '#ff0000'; U.ctx(L.canvas).fillRect(0, 0, 50, 50);
+      const C = d.addLayer('clip'); C.clip = true; U.ctx(C.canvas).fillStyle = '#0000ff'; U.ctx(C.canvas).fillRect(0, 0, 100, 25);
+      d.invalidateAll();
+      const p = d.getProjection();
+      assert(near(px(p, 10, 10), [0, 0, 255, 255]), 'clipped area should be blue');
+      assert(near(px(p, 70, 10), [255, 255, 255, 255]), 'outside base should stay white');
+      assert(near(px(p, 10, 40), [255, 0, 0, 255]), 'base visible below clip');
+    });
+    await test('undo / redo of strokes and layer operations', () => {
+      const d = new ND.Doc(200, 200, '#ffffff');
+      d.addLayer('A');
+      const st = new ND.Brush.Stroke(d, { size: 20, flow: 1, stabilizer: 0 }, { colour: '#000000' });
+      st.begin({ x: 20, y: 100, p: 1 }); for (let i = 1; i <= 20; i++) st.move({ x: 20 + i * 8, y: 100, p: 1 }); st.end('stroke');
+      assert(px(d.getProjection(), 100, 100)[0] < 20, 'stroke painted');
+      d.history.undo(); d.invalidateAll();
+      assert(px(d.getProjection(), 100, 100)[0] > 240, 'undo removed stroke');
+      d.history.redo(); d.invalidateAll();
+      assert(px(d.getProjection(), 100, 100)[0] < 20, 'redo restored stroke');
+      d.history.jumpTo(0);
+      assert(d.allLayers().length === 1, 'undo removed the new layer');
+    });
+    await test('every brush preset paints without errors', () => {
+      const d = new ND.Doc(400, 200, '#ffffff'); d.cloneSource = { x: 50, y: 50 };
+      for (const p of ND.Presets.LIST) {
+        const st = new ND.Brush.Stroke(d, p.settings, { colour: '#c03050' });
+        for (let i = 0; i <= 20; i++) { const q = { x: 40 + i * 15, y: 100 + Math.sin(i / 3) * 40, p: 0.6, t: i * 16 }; i ? st.move(q) : st.begin(q); }
+        st.tick(1e9); st.end(p.name);
+      }
+      return ND.Presets.LIST.length + ' presets';
+    });
+    await test('brush preview thumbnails render', () => { for (const p of ND.Presets.LIST) ND.Brush.previewStroke(p.settings, 128, 40, '#fff'); });
+    await test('filters run', () => {
+      const c = U.canvas(80, 60); U.ctx(c).fillStyle = '#4080c0'; U.ctx(c).fillRect(10, 10, 50, 30);
+      for (const f of ND.Filters.list) ND.Filters.run(f.id, c, {}, { fg: '#000000', bg: '#ffffff' });
+      return ND.Filters.list.length + ' filters';
+    });
+    await test('stamps, patterns, tips and textures render', () => {
+      ND.Stamps.list.forEach((s) => assert(ND.Stamps.render(s.name, 64, 'tint', '#f00'), s.name));
+      ND.Patterns.SPRITES.forEach((s) => assert(ND.Patterns.sprites(s.name).length, s.name));
+      ND.Patterns.TILES.forEach((s) => assert(ND.Patterns.tile(s.name).width > 0, s.name));
+      ND.Tips.list.forEach((t) => ND.Tips.preview(t.id, 32));
+      ND.Textures.list.forEach((t) => assert(ND.Textures.get(t.id).data.length === 256 * 256, t.id));
+      return ND.Stamps.list.length + ' stamps, ' + ND.Patterns.SPRITES.length + ' scatter + ' + ND.Patterns.TILES.length + ' tiling patterns';
+    });
+    await test('textures tile seamlessly', () => {
+      for (const t of ND.Textures.list) {
+        const d = ND.Textures.get(t.id).data, N = 256;
+        let edge = 0, inner = 0;
+        for (let y = 0; y < N; y++) { edge += Math.abs(d[y * N + N - 1] - d[y * N]); inner += Math.abs(d[y * N + 128] - d[y * N + 129]); }
+        assert(edge < inner * 4 + 8, t.id + ' has a seam');
+      }
+    });
+    await test('.ndraw project round-trip keeps groups and properties', async () => {
+      const d = new ND.Doc(64, 64, '#ffffff');
+      const L = d.addLayer('Layer'); L.opacity = 0.5; L.blendMode = 'multiply'; L.alphaLock = true;
+      d.addGroup(); const I = d.addLayer('Inside'); I.clip = true;
+      const d2 = await ND.Store.deserialize(ND.Store.serialize(d));
+      const a = d.displayList().map((x) => x.depth + x.node.name), b = d2.displayList().map((x) => x.depth + x.node.name);
+      assert(a.join() === b.join(), 'structure ' + b.join());
+      const L2 = d2.allLayers().find((l) => l.name === 'Layer');
+      assert(L2.opacity === 0.5 && L2.blendMode === 'multiply' && L2.alphaLock, 'props');
+      assert(d2.allLayers().find((l) => l.name === 'Inside').clip, 'clip flag');
+    });
+    await test('loads projects saved by the old single-file version', async () => {
+      const old = JSON.stringify({ app: 'pigment', version: 1, width: 10, height: 10, name: 'old', backgroundColor: '#ffffff', layers: [
+        { name: 'Background', visible: true, opacity: 1, blendMode: 'normal', isGroup: false, depth: 0, png: U.canvas(10, 10).toDataURL() },
+        { name: 'Group', visible: true, opacity: 1, blendMode: 'normal', isGroup: true, depth: 0, png: '' },
+        { name: 'Child', visible: true, opacity: 1, blendMode: 'normal', isGroup: false, depth: 1, png: U.canvas(10, 10).toDataURL() }] });
+      const d = await ND.Store.deserialize(old);
+      assert(d.displayList().map((x) => x.depth + x.node.name).join() === '0Group,1Child,0Background', d.displayList().map((x) => x.depth + x.node.name).join());
+    });
+    await test('OpenRaster export → import', async () => {
+      const d = new ND.Doc(32, 32, '#ffffff'); const L = d.addLayer('Ink'); U.ctx(L.canvas).fillRect(0, 0, 8, 8); L.blendMode = 'multiply';
+      const d2 = await ND.Store.importORA(await (await ND.Store.exportORA(d)).arrayBuffer(), 'x.ora');
+      const L2 = d2.allLayers().find((l) => l.name === 'Ink');
+      assert(L2 && L2.blendMode === 'multiply', 'layer + blend mode');
+      assert(px(L2.canvas, 2, 2)[3] === 255, 'pixels');
+    });
+    await test('layered PSD structure is consistent', async () => {
+      const d = new ND.Doc(40, 30, '#ffffff'); d.addLayer('A'); d.addGroup(); d.addLayer('B');
+      const b = new Uint8Array(await ND.Store.exportPSD(d).arrayBuffer()), v = new DataView(b.buffer);
+      assert(String.fromCharCode(...b.slice(0, 4)) === '8BPS', 'signature');
+      const lm = 26 + 4 + 4, lmLen = v.getUint32(lm), compStart = lm + 4 + lmLen;
+      assert(v.getUint16(compStart) === 0 && b.length === compStart + 2 + 3 * 40 * 30, 'section lengths');
+    });
+    await test('selection grow / shrink / border', () => {
+      const d = new ND.Doc(50, 50, null); const m = U.canvas(50, 50); U.ctx(m).fillStyle = '#fff'; U.ctx(m).fillRect(20, 20, 10, 10); d.selectionMask = m;
+      assert(ND.Sel.bbox(ND.Sel.grow(d, 3)).w === 16, 'grow');
+      assert(ND.Sel.bbox(ND.Sel.shrink(d, 2)).w === 6, 'shrink');
+      assert(ND.Sel.bbox(ND.Sel.border(d, 2)).w === 14, 'border');
+    });
+    await test('flood-fill region respects tolerance', () => {
+      const c = U.canvas(20, 20), x = U.ctx(c); x.fillStyle = '#fff'; x.fillRect(0, 0, 20, 20); x.fillStyle = '#000'; x.fillRect(10, 0, 1, 20);
+      const a = ND.Sel.colourRegion(c, 20, 20, 2, 2, { tolerance: 10, contiguous: true });
+      assert(a[2 * 20 + 2] && !a[2 * 20 + 15], 'stops at the black line');
+      const g = ND.Sel.colourRegion(c, 20, 20, 2, 2, { tolerance: 10, contiguous: false });
+      assert(g[2 * 20 + 15], 'global select finds both sides');
+    });
+    await test('selection masks paint operations', () => {
+      const d = new ND.Doc(40, 40, null); const m = U.canvas(40, 40); U.ctx(m).fillStyle = '#fff'; U.ctx(m).fillRect(0, 0, 20, 40); d.selectionMask = m;
+      d.paintOnActive('fill', (x) => { x.fillStyle = '#ff0000'; x.fillRect(0, 0, 40, 40); });
+      assert(px(d.active.canvas, 5, 5)[3] === 255 && px(d.active.canvas, 30, 5)[3] === 0, 'only inside the selection');
+    });
+    await test('alpha lock keeps transparency', () => {
+      const d = new ND.Doc(40, 40, null); const L = d.active; U.ctx(L.canvas).fillRect(0, 0, 10, 10); L.alphaLock = true;
+      d.paintOnActive('fill', (x) => { x.fillStyle = '#00ff00'; x.fillRect(0, 0, 40, 40); });
+      assert(near(px(L.canvas, 5, 5), [0, 255, 0, 255]) && px(L.canvas, 30, 30)[3] === 0, 'alpha preserved');
+    });
+    await test('layer masks hide and reveal', () => {
+      const d = new ND.Doc(100, 100, '#ffffff'); const L = d.addLayer('red');
+      U.ctx(L.canvas).fillStyle = '#f00'; U.ctx(L.canvas).fillRect(0, 0, 100, 100);
+      d.addMask(false); d.setEditMask(true);
+      const st = new ND.Brush.Stroke(d, { size: 20, flow: 1, stabilizer: 0 }, { colour: '#000000' });
+      st.begin({ x: 10, y: 50, p: 1 }); for (let i = 1; i <= 10; i++) st.move({ x: 10 + i * 8, y: 50, p: 1 }); st.end('mask');
+      d.invalidateAll();
+      assert(near(px(d.getProjection(), 50, 50), [255, 255, 255, 255]), 'masked area shows white');
+      assert(near(px(d.getProjection(), 50, 10), [255, 0, 0, 255]), 'unmasked stays red');
+      assert(L.canvas && px(L.canvas, 50, 50)[0] === 255, 'pixels untouched');
+    });
+    await test('adjustment layers (every kind) are non-destructive', () => {
+      const d = new ND.Doc(40, 30, '#808080');
+      const before = px(d.active.canvas, 5, 5);
+      for (const k of ND.Adjust.KINDS) { d.addAdjustment(k.id); d.invalidateAll(); d.getProjection(); }
+      assert(near(px(d.root.children[0].canvas, 5, 5), before, 0), 'background pixels unchanged');
+      return ND.Adjust.KINDS.length + ' kinds';
+    });
+    await test('curves maths', () => {
+      const lut = ND.Adjust.curveLUT([[0, 0], [128, 200], [255, 255]]);
+      assert(lut[0] === 0 && lut[255] === 255 && Math.abs(lut[128] - 200) <= 1, 'passes through points');
+      for (let i = 1; i < 256; i++) assert(lut[i] >= lut[i - 1], 'monotone');
+    });
+    await test('layer effects render around the layer', () => {
+      const d = new ND.Doc(100, 100, '#ffffff'); const L = d.addLayer('dot');
+      U.ctx(L.canvas).fillStyle = '#00f'; U.ctx(L.canvas).fillRect(40, 40, 20, 20);
+      const fx = ND.Effects.normalise(null); fx.stroke.on = true; fx.stroke.size = 5; fx.stroke.color = '#ff0000';
+      d.setProps(L, { effects: fx }); d.invalidateAll();
+      assert(near(px(d.getProjection(), 37, 50), [255, 0, 0, 255], 10), 'stroke drawn outside');
+    });
+    await test('spot heal / content-aware fill', () => {
+      const d = new ND.Doc(200, 200, '#fff'), x = U.ctx(d.active.canvas);
+      for (let i = 0; i < 200; i += 10) { x.fillStyle = i % 20 ? '#c08040' : '#a06030'; x.fillRect(0, i, 200, 10); }
+      x.fillStyle = '#000'; x.fillRect(90, 90, 20, 20);
+      const m = U.canvas(200, 200), mx = U.ctx(m); mx.fillStyle = '#fff'; mx.beginPath(); mx.arc(100, 100, 16, 0, 7); mx.fill();
+      ND.Heal.heal(U.clone(d.active.canvas), d.active.canvas, m, null);
+      assert(px(d.active.canvas, 100, 100)[0] > 120, 'black square replaced');
+    });
+    await test('liquify commits with undo', () => {
+      const d = new ND.Doc(100, 100, '#fff'); U.ctx(d.active.canvas).fillStyle = '#000'; U.ctx(d.active.canvas).fillRect(45, 0, 10, 100);
+      const lq = new ND.Heal.Liquify(d, d.surface());
+      for (let i = 0; i < 10; i++) lq.dab(50, 50, 30, 0.8, 'push', 2, 0);
+      lq.commit();
+      assert(d.history.stack.length === 1, 'one undo step');
+      d.history.undo();
+      assert(px(d.active.canvas, 58, 50)[0] > 200, 'undo restores');
+    });
+    await test('quick mask becomes a selection', () => {
+      const d = new ND.Doc(60, 60, '#fff'); d.enterQuickMask();
+      d.paintOnActive('qm', (x) => { x.fillStyle = '#fff'; x.fillRect(10, 10, 20, 20); });
+      d.exitQuickMask();
+      const bb = ND.Sel.bbox(d.selectionMask);
+      assert(bb && bb.x === 10 && bb.w === 20, JSON.stringify(bb));
+    });
+    await test('gap-closing fill does not leak', () => {
+      const c = U.canvas(100, 100), x = U.ctx(c); x.fillStyle = '#fff'; x.fillRect(0, 0, 100, 100);
+      x.strokeStyle = '#000'; x.lineWidth = 2; x.strokeRect(20, 20, 60, 60); x.fillStyle = '#fff'; x.fillRect(49, 18, 3, 5);
+      assert(ND.Sel.colourRegion(c, 100, 100, 50, 50, { tolerance: 30, contiguous: true })[505] > 0, 'normal fill leaks');
+      assert(!ND.Sel.gapRegion(c, 100, 100, 50, 50, { tolerance: 30, gap: 3 })[505], 'gap fill stays inside');
+    });
+    await test('taper-out thins the end of a stroke', () => {
+      const d = new ND.Doc(300, 100, '#fff');
+      const st = new ND.Brush.Stroke(d, { size: 30, flow: 1, stabilizer: 0, taperOut: 120, minSize: 0.05, pressureSize: false }, { colour: '#000000' });
+      st.begin({ x: 20, y: 50, p: 1 }); for (let i = 1; i <= 50; i++) st.move({ x: 20 + i * 5, y: 50, p: 1, t: i * 16 }); st.end('t');
+      const a = U.ctx(d.active.canvas).getImageData(0, 0, 300, 100).data, col = (x) => { let n = 0; for (let y = 0; y < 100; y++) if (a[(y * 300 + x) * 4] < 128) n++; return n; };
+      assert(col(60) > col(255) + 8, 'start ' + col(60) + ' vs end ' + col(255));
+    });
+    await test('project round-trip keeps masks, adjustments, effects, text, guides', async () => {
+      const d = new ND.Doc(60, 60, '#fff'); d.addLayer('x'); d.addMask(false, true); d.addAdjustment('hsl');
+      const L = d.addLayer('t'); L.textData = { text: 'hi', x: 1, y: 1 }; L.effects = ND.Effects.normalise({ glow: { on: true } });
+      d.guides = [{ axis: 'x', pos: 10 }];
+      const d2 = await ND.Store.deserialize(ND.Store.serialize(d));
+      const list = d2.displayList().map((q) => q.node.type + (q.node.mask ? '+m' : '')).join();
+      assert(list === 'layer,adjust+m,layer+m,layer', list);
+      const t = d2.allLayers().find((l) => l.textData);
+      assert(t && t.effects && t.effects.glow.on && d2.guides.length === 1, 'text/effects/guides');
+    });
+    await test('PSD export → import keeps layers, groups, blend modes', async () => {
+      const d = new ND.Doc(40, 30, '#ffffff'); const A = d.addLayer('Ink'); U.ctx(A.canvas).fillStyle = '#ff0000'; U.ctx(A.canvas).fillRect(2, 2, 10, 10);
+      A.blendMode = 'multiply'; A.opacity = 0.5; d.addGroup(); d.addLayer('Inside'); 
+      const d2 = await ND.PSD.importPSD(await ND.Store.exportPSD(d).arrayBuffer(), 'x.psd');
+      const ink = d2.allLayers().find((l) => l.name === 'Ink');
+      assert(ink && ink.blendMode === 'multiply' && Math.abs(ink.opacity - 0.5) < 0.01, 'blend/opacity');
+      assert(near(px(ink.canvas, 5, 5), [255, 0, 0, 255]), 'pixels');
+      const grp = d2.root.children.find((n) => n.type === 'group');
+      assert(grp && grp.children.some((l) => l.name === 'Inside'), 'group structure');
+      return d2.allLayers().length + ' layers';
+    });
+    await test('PSD import reads flat RLE-compressed files', async () => {
+      const W = 4, H = 3, parts = [];
+      const u8 = (...a) => parts.push(...a), u16 = (v) => u8(v >> 8, v & 255), u32 = (v) => { u16(v >>> 16); u16(v & 65535); };
+      u8(56, 66, 80, 83); u16(1); u8(0, 0, 0, 0, 0, 0); u16(3); u32(H); u32(W); u16(8); u16(3); u32(0); u32(0); u32(0);
+      u16(1); for (let i = 0; i < H * 3; i++) u16(2);
+      const vals = [200, 100, 50];
+      for (let c = 0; c < 3; c++) for (let y = 0; y < H; y++) u8(256 - (W - 1), vals[c]);
+      const d = await ND.PSD.importPSD(new Uint8Array(parts).buffer, 'flat.psd');
+      assert(d.width === W && d.height === H, 'size');
+      assert(near(px(d.allLayers()[0].canvas, 1, 1), [200, 100, 50, 255]), 'colour ' + px(d.allLayers()[0].canvas, 1, 1));
+    });
+    await test('Select subject finds an object on a plain background', () => {
+      const c = U.canvas(400, 300), x = U.ctx(c); x.fillStyle = '#d8e4ee'; x.fillRect(0, 0, 400, 300);
+      x.fillStyle = '#c0392b'; x.beginPath(); x.arc(200, 150, 70, 0, 7); x.fill();
+      const m = ND.Smart.selectSubject(c).mask;
+      assert(px(m, 200, 150)[3] > 220, 'centre selected ' + px(m, 200, 150)[3]);
+      assert(px(m, 20, 20)[3] < 30 && px(m, 300, 150)[3] < 30, 'background not selected');
+      assert(px(m, 200, 85)[3] > 100, 'reaches the edge');
+    });
+    await test('Quick select grows from a stroke to the object edges', () => {
+      const c = U.canvas(300, 200), x = U.ctx(c); x.fillStyle = '#fff'; x.fillRect(0, 0, 300, 200);
+      x.fillStyle = '#2a6'; x.fillRect(60, 40, 120, 100); x.fillStyle = '#26a'; x.fillRect(190, 40, 60, 100);
+      const ses = new ND.Smart.Session(c), mark = U.canvas(300, 200), mx = U.ctx(mark); mx.fillStyle = '#fff'; mx.fillRect(100, 85, 30, 10);
+      const m = ses.add(mark, false);
+      assert(px(m, 65, 45)[3] > 200 && px(m, 175, 135)[3] > 200, 'whole green box');
+      assert(px(m, 220, 90)[3] < 40 && px(m, 30, 30)[3] < 40, 'neighbour and background excluded');
+      const m2 = ses.add((() => { const k = U.canvas(300, 200); U.ctx(k).fillStyle = '#fff'; U.ctx(k).fillRect(200, 85, 30, 10); return k; })(), false);
+      assert(px(m2, 220, 90)[3] > 200, 'second stroke adds the blue box');
+    });
+    await test('Quick select leaves no halo on a gradient background', () => {
+      const c = U.canvas(960, 540), x = U.ctx(c), g = x.createLinearGradient(0, 0, 0, 540);
+      g.addColorStop(0, '#7fb2e5'); g.addColorStop(1, '#e8f0f8'); x.fillStyle = g; x.fillRect(0, 0, 960, 540);
+      x.fillStyle = '#d2462f'; x.beginPath(); x.arc(650, 280, 115, 0, 7); x.fill();
+      const ses = new ND.Smart.Session(c), mark = U.canvas(960, 540); U.ctx(mark).fillStyle = '#fff'; U.ctx(mark).fillRect(620, 275, 60, 10);
+      const m = ses.add(mark, false), bb = ND.Sel.bbox(m);
+      assert(px(m, 650, 180)[3] > 220 && px(m, 450, 280)[3] < 8 && px(m, 520, 280)[3] < 8, 'clean edge');
+      assert(Math.abs(bb.w - 230) < 12 && Math.abs(bb.h - 230) < 12, JSON.stringify(bb));
+    });
+    await test('Remove background masks the active layer', () => {
+      const d = new ND.Doc(300, 200, null), L = d.active, x = U.ctx(L.canvas);
+      x.fillStyle = '#eee'; x.fillRect(0, 0, 300, 200); x.fillStyle = '#333'; x.fillRect(110, 50, 80, 100);
+      d.setProps(L, { mask: ND.Smart.backgroundMask(L.canvas), maskEnabled: true }, 'Remove Background');
+      assert(px(L.mask, 150, 100)[0] > 200 && px(L.mask, 10, 10)[0] < 40, 'mask white on subject, black on background');
+      d.invalidateAll(); assert(px(d.getProjection(), 10, 10)[3] < 20, 'background hidden');
+      d.history.undo(); assert(!L.mask, 'undoable');
+    });
+    await test('tile backup restores only touched regions', () => {
+      const c = U.canvas(600, 400), x = U.ctx(c); x.fillStyle = '#123456'; x.fillRect(0, 0, 600, 400);
+      const tb = new ND.TileBackup(c); tb.save({ x: 300, y: 200, w: 40, h: 40 });
+      x.fillStyle = '#fff'; x.fillRect(300, 200, 40, 40);
+      const r = tb.region({ x: 300, y: 200, w: 40, h: 40 });
+      assert(near(px(r, 5, 5), [0x12, 0x34, 0x56, 255]), 'region holds old pixels');
+      tb.restore(); assert(near(px(c, 310, 210), [0x12, 0x34, 0x56, 255]), 'restored');
+      assert(tb.bytes < 600 * 400 * 4, 'stores less than the full canvas');
+    });
+    await test('selection bbox on a large mask is exact', () => {
+      const m = U.canvas(5000, 3000), x = U.ctx(m); x.fillStyle = '#fff'; x.fillRect(1234, 2345, 7, 3);
+      const t0 = performance.now(), bb = ND.Sel.bbox(m, 1), ms = performance.now() - t0;
+      assert(bb && bb.x === 1234 && bb.y === 2345 && bb.w === 7 && bb.h === 3, JSON.stringify(bb));
+      assert(ND.Sel.buildAnts(m).length === 2, 'marching ants');
+      return Math.round(ms) + ' ms';
+    });
+    await test('spot heal with a hint only reads nearby pixels', () => {
+      const d = new ND.Doc(3000, 2000, '#fff'), x = U.ctx(d.active.canvas);
+      for (let i = 0; i < 2000; i += 10) { x.fillStyle = i % 20 ? '#c08040' : '#a06030'; x.fillRect(0, i, 3000, 10); }
+      x.fillStyle = '#000'; x.fillRect(1490, 990, 20, 20);
+      const m = U.canvas(3000, 2000), mx = U.ctx(m); mx.fillStyle = '#fff'; mx.beginPath(); mx.arc(1500, 1000, 16, 0, 7); mx.fill();
+      const t0 = performance.now();
+      ND.Heal.heal(d.active.canvas, d.active.canvas, m, null, { x: 1480, y: 980, w: 40, h: 40 });
+      assert(px(d.active.canvas, 1500, 1000)[0] > 120, 'healed');
+      return Math.round(performance.now() - t0) + ' ms';
+    });
+    await test('async save + blob autosave format load back', async () => {
+      const d = new ND.Doc(60, 40, '#fff'); const L = d.addLayer('paint'); U.ctx(L.canvas).fillStyle = '#0f0'; U.ctx(L.canvas).fillRect(0, 0, 10, 10); d.addMask(false, true);
+      const d2 = await ND.Store.deserialize(await ND.Store.serializeAsync(d));
+      assert(d2.allLayers().length === 2 && near(px(d2.allLayers()[1].canvas, 5, 5), [0, 255, 0, 255]), 'async .ndraw');
+      const saved = await ND.Store.autosaveRecord(d);
+      assert(saved.format === 'ndraw-parts' && saved.blobs.length >= 3 && saved.blobs[0] instanceof Blob, 'blob parts');
+      const d3 = await ND.Store.restore(saved);
+      assert(d3.allLayers()[1].mask && near(px(d3.allLayers()[1].canvas, 5, 5), [0, 255, 0, 255]), 'restored with mask');
+      const d4 = await ND.Store.restore(ND.Store.serialize(d)); assert(d4.allLayers().length === 2, 'old string autosaves still load');
+    });
+    document.getElementById('sum').innerHTML = '<span class="' + (fail ? 'fail' : 'pass') + '">' + pass + ' passed, ' + fail + ' failed</span>';
+  })();
+  </script>
+</body>
+</html>

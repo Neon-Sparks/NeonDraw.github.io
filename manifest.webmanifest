@@ -1,0 +1,32 @@
+{
+  "name": "Neon Draw",
+  "short_name": "Neon Draw",
+  "description": "Layered painting and photo editing in your browser — brushes, adjustment layers, masks, retouching. Works offline.",
+  "id": "./",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#141519",
+  "theme_color": "#141519",
+  "categories": ["graphics", "photo", "productivity"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "file_handlers": [
+    {
+      "action": "./index.html",
+      "accept": {
+        "application/x-neondraw+json": [".ndraw"],
+        "image/vnd.adobe.photoshop": [".psd"],
+        "image/openraster": [".ora"],
+        "image/png": [".png"],
+        "image/jpeg": [".jpg", ".jpeg"],
+        "image/webp": [".webp"]
+      }
+    }
+  ],
+  "launch_handler": { "client_mode": "focus-existing" }
+}
