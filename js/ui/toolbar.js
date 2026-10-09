@@ -5,9 +5,19 @@
   const T = {};
 
   /* ---------------- toolbox ---------------- */
-  T.buildToolbox = function (el) {
+  T.buildToolbox = function (box) {
     const btns = {};
     let group = null;
+    // header: drag grip, column switch, dock / float
+    const cols = h('button.nd-tb-btn', { type: 'button', title: 'Columns: click to switch between 1, 2 and 3 columns' });
+    const pin = h('button.nd-tb-btn', { type: 'button' });
+    const head = h('div.nd-tb-head', { title: 'Drag to move the tool panel — drop it near the left or right edge to dock it' }, h('span.nd-tb-grip', '⋮⋮'), cols, pin);
+    const el = h('div.nd-tb-body');
+    box.append(head, el);
+    T.layoutToolbox = () => layout(box, cols, pin);
+    cols.addEventListener('click', (e) => { e.stopPropagation(); App.set('toolboxCols', (T.colsNow() % 3) + 1); T.layoutToolbox(); });
+    pin.addEventListener('click', (e) => { e.stopPropagation(); T.setToolboxMode(App.state.toolboxMode === 'float' ? 'left' : 'float'); });
+    dragToolbox(box, head);
     for (const t of App.TOOLS) {
       if (t.group !== group) { group = t.group; el.appendChild(h('div.nd-tool-group', group)); }
       const b = h('button.nd-tool', { type: 'button', title: t.label + (t.key ? '  (' + t.key + ')' : ''), 'aria-label': t.label }, ND.icon(t.icon, 20));
@@ -20,6 +30,7 @@
     const reset = C.iconButton('reset', 'Black & white (D)', () => App.resetColours(), 'tiny');
     fg.addEventListener('click', () => { const i = document.querySelector('.nd-colour-panel input[type=color]'); if (i) i.click(); });
     bg.addEventListener('click', () => App.swapColours());
+    el.appendChild(h('div.nd-tool-group.nd-tb-sep'));
     el.appendChild(h('div.nd-fgbg', fg, bg, swap, reset));
     const qm = h('button.nd-tool.qm', { type: 'button', title: 'Quick mask — paint a selection (Q)' }, ND.icon('quickmask', 20));
     qm.addEventListener('click', () => App.toggleQuickMask());
@@ -32,7 +43,94 @@
     };
     App.on('tool', refresh); App.on('colour', refresh); App.on('brush', refresh);
     refresh();
+    T.layoutToolbox();
+    window.addEventListener('resize', () => T.layoutToolbox());
   };
+
+  /* ---------- tool panel layout: 1–3 columns, docked left / right or floating ---------- */
+  // columns in use: the user's choice, or automatic (2 when one column would need scrolling)
+  let autoCols = 1;
+  T.colsNow = function () {
+    const c = App.state.toolboxCols;
+    return c >= 1 && c <= 3 ? c : autoCols;
+  };
+  function layout(box, colsBtn, pin) {
+    const st = App.state, mode = ['left', 'right', 'float'].includes(st.toolboxMode) ? st.toolboxMode : 'left';
+    box.classList.remove('tb-left', 'tb-right', 'tb-float');
+    box.classList.add('tb-' + mode);
+    const apply = (k) => { box.style.setProperty('--cols', k); box.classList.toggle('multi', k > 1); };
+    if (!(st.toolboxCols >= 1 && st.toolboxCols <= 3) && box.offsetParent) {
+      // automatic: the fewest columns that fit without scrolling
+      const body = box.querySelector('.nd-tb-body');
+      for (autoCols = 1; autoCols < 3; autoCols++) {
+        apply(autoCols);
+        if (body.scrollHeight <= body.clientHeight + 1) break;
+      }
+    }
+    const n = T.colsNow();
+    apply(n);
+    colsBtn.textContent = String(n);
+    colsBtn.title = n + ' column' + (n > 1 ? 's' : '') + ' — click for ' + ((n % 3) + 1);
+    U.clear(pin); pin.appendChild(ND.icon(mode === 'float' ? 'pin' : 'fullscreen', 12));
+    pin.title = mode === 'float' ? 'Dock the tool panel on the left' : 'Float the tool panel (then drag it anywhere)';
+    if (mode === 'float') {
+      const main = box.parentNode, p = st.toolboxPos || { x: 70, y: 12 };
+      const maxX = Math.max(0, main.clientWidth - box.offsetWidth), maxY = Math.max(0, main.clientHeight - 60);
+      box.style.left = U.clamp(p.x, 0, maxX) + 'px'; box.style.top = U.clamp(p.y, 0, maxY) + 'px';
+    } else { box.style.left = ''; box.style.top = ''; }
+    if (ND.View && ND.View.request) ND.View.request();
+  }
+  T.setToolboxMode = function (mode, pos) {
+    App.set('toolboxMode', mode);
+    if (pos) App.set('toolboxPos', pos);
+    T.layoutToolbox();
+  };
+  // drag by the header; dropping near the left / right edge docks it there
+  function dragToolbox(box, head) {
+    let drag = null, zone = null;
+    const hint = h('div.nd-tb-snap');
+    head.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('button') || e.button !== 0) return;
+      const main = box.parentNode, mr = main.getBoundingClientRect(), br = box.getBoundingClientRect();
+      drag = { sx: e.clientX, sy: e.clientY, ox: e.clientX - br.left, oy: e.clientY - br.top, mr, moved: false, startX: br.left - mr.left, startY: br.top - mr.top };
+      try { head.setPointerCapture(e.pointerId); } catch (err) { /* synthetic */ }
+    });
+    head.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      if (!drag.moved) {
+        if (Math.abs(e.clientX - drag.sx) + Math.abs(e.clientY - drag.sy) < 5) return;
+        drag.moved = true;
+        if (App.state.toolboxMode !== 'float') T.setToolboxMode('float', { x: drag.startX + 8, y: drag.startY });
+        box.parentNode.appendChild(hint);
+        box.classList.add('dragging');
+      }
+      const main = box.parentNode, mr = main.getBoundingClientRect(), dock = document.getElementById('nd-dock');
+      const vpRight = (dock && dock.offsetParent ? dock.getBoundingClientRect().left : mr.right) - mr.left;
+      let x = e.clientX - mr.left - drag.ox, y = e.clientY - mr.top - drag.oy;
+      const w = box.offsetWidth, hgt = box.offsetHeight;
+      // magnet to the edges of the canvas area
+      if (Math.abs(y) < 14) y = 0;
+      if (Math.abs(main.clientHeight - (y + hgt)) < 14) y = main.clientHeight - hgt;
+      x = U.clamp(x, 0, Math.max(0, main.clientWidth - w)); y = U.clamp(y, 0, Math.max(0, main.clientHeight - 40));
+      box.style.left = x + 'px'; box.style.top = y + 'px';
+      const px = e.clientX - mr.left;
+      zone = px < 40 ? 'left' : Math.abs(px - vpRight) < 40 ? 'right' : null;
+      hint.className = 'nd-tb-snap' + (zone ? ' show ' + zone : '');
+      if (zone === 'right') hint.style.left = vpRight - 56 + 'px'; else hint.style.left = '';
+    });
+    const end = () => {
+      if (!drag) return;
+      const moved = drag.moved;
+      drag = null;
+      box.classList.remove('dragging');
+      hint.remove();
+      if (!moved) return;
+      if (zone) { T.setToolboxMode(zone); App.toast('Tool panel docked on the ' + zone); } else T.setToolboxMode('float', { x: parseFloat(box.style.left) || 0, y: parseFloat(box.style.top) || 0 });
+      zone = null;
+    };
+    head.addEventListener('pointerup', end);
+    head.addEventListener('pointercancel', end);
+  }
 
   /* ---------------- options bar ---------------- */
   let optEl, controls = [];

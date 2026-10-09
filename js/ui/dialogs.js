@@ -232,7 +232,7 @@
       ['[ ]', 'Brush size down / up (Shift: softness)'], ['Shift+drag', 'Resize the brush on the canvas'], ['Shift+click', 'Straight line from the last stroke'],
       ['Ctrl/Alt+click', 'Pick colour while painting (sets clone source with the clone tool)'], ['Right-click / pen side button', 'Pop-up palette: favourite brushes, recent colours, colour wheel (Alt+right-click picks a colour)'], ['Alt+wheel', 'Brush size'],
       ['X · D', 'Swap colours · black & white'], ['1 · 2 · 3', 'Fit · 100% · 200%'], ['4 · 5 · 6', 'Rotate view left · reset · right'], ['M', 'Mirror view'],
-      ['Space+drag', 'Pan from any tool (Shift+Space+drag rotates)'], ['Tab', 'Hide / show panels'], ['F11', 'Full screen'],
+      ['Space+drag', 'Pan from any tool (Shift+Space+drag rotates)'], ['Tab', 'Hide / show panels (the canvas fills the window)'], ['F11', 'Full screen'],
       ['Ctrl+Z · Ctrl+Shift+Z / Ctrl+Y', 'Undo · redo'], ['Ctrl+C · X · V', 'Copy · cut · paste (works with other apps)'], ['Ctrl+Shift+C', 'Copy merged'],
       ['Ctrl+A · Ctrl+D · Ctrl+Shift+I', 'Select all · deselect · invert'], ['Delete', 'Clear the selection'], ['Alt+Backspace · Ctrl+Backspace', 'Fill with FG · BG'],
       ['Ctrl+Shift+N · Ctrl+J · Ctrl+E', 'New layer · layer via copy · merge down'], ['Ctrl+G · Ctrl+Shift+G', 'Group · ungroup'], ['Ctrl+Alt+G', 'Clipping mask'],

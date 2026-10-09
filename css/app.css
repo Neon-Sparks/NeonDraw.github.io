@@ -91,8 +91,24 @@ select:focus, .nd-field:focus, .nd-search:focus, .nd-hex:focus { outline: 1px so
 
 /* ---------- main area ---------- */
 .nd-main { display: flex; min-height: 0; }
-.nd-toolbox { display: flex; flex-direction: column; align-items: center; gap: 2px; width: 50px; flex-shrink: 0; overflow-y: auto; overflow-x: hidden; padding: 4px 0 8px; background: var(--bg2); border-right: 1px solid var(--line); }
-.nd-tool-group { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: var(--fg3); margin-top: 6px; }
+.nd-main { position: relative; }
+.nd-toolbox { display: flex; flex-direction: column; flex-shrink: 0; min-height: 0; background: var(--bg2); border-right: 1px solid var(--line); order: 0; }
+.nd-viewport { order: 1; }
+.nd-dock { order: 3; }
+.nd-toolbox.tb-right { order: 2; border-right: 0; border-left: 1px solid var(--line); }
+.nd-toolbox.tb-float { position: absolute; z-index: 30; max-height: calc(100% - 8px); border: 1px solid var(--line2); border-radius: 10px; box-shadow: 0 10px 30px rgba(0, 0, 0, .55); overflow: hidden; }
+.nd-toolbox.tb-float.dragging { opacity: .85; }
+.nd-tb-head { display: flex; align-items: center; justify-content: center; gap: 2px; height: 22px; flex-shrink: 0; padding: 0 3px; border-bottom: 1px solid var(--line); cursor: grab; touch-action: none; }
+.nd-toolbox.dragging .nd-tb-head { cursor: grabbing; }
+.nd-tb-grip { color: var(--fg3); font-size: 11px; letter-spacing: -2px; margin-right: 2px; }
+.nd-tb-btn { display: inline-grid; place-items: center; width: 18px; height: 17px; padding: 0; background: none; border: 1px solid transparent; border-radius: 4px; color: var(--fg2); font-size: 10px; font-weight: 700; }
+.nd-tb-btn:hover { background: var(--bg4); color: var(--fg); }
+.nd-tb-body { display: grid; grid-template-columns: repeat(var(--cols, 1), 40px); justify-content: center; align-content: start; justify-items: center; gap: 2px; overflow-y: auto; overflow-x: hidden; padding: 2px 5px 8px; flex: 1; min-height: 0; }
+.nd-tb-body > .nd-tool-group, .nd-tb-body > .nd-fgbg, .nd-tb-body > .nd-tool.qm { grid-column: 1 / -1; }
+.nd-tb-snap { position: absolute; top: 0; bottom: 0; width: 56px; z-index: 29; pointer-events: none; display: none; background: rgba(77, 143, 209, .22); border: 2px dashed var(--acc2); border-radius: 6px; }
+.nd-tb-snap.show { display: block; }
+.nd-tb-snap.left { left: 0; }
+.nd-tool-group { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: var(--fg3); margin-top: 6px; text-align: center; }
 .nd-tool { display: grid; place-items: center; width: 38px; height: 34px; flex-shrink: 0; background: none; border: 1px solid transparent; border-radius: 7px; color: var(--fg2); }
 .nd-tool:hover { background: var(--bg4); color: var(--fg); }
 .nd-tool.active { background: var(--acc-bg); border-color: var(--acc); color: #fff; box-shadow: 0 0 10px rgba(77, 143, 209, .35); }
@@ -105,7 +121,7 @@ select:focus, .nd-field:focus, .nd-search:focus, .nd-hex:focus { outline: 1px so
 .nd-fgbg .nd-ibtn:nth-of-type(4) { left: 0; bottom: 0; }
 .nd-fgbg .nd-ibtn svg { width: 12px; height: 12px; }
 
-.nd-viewport { position: relative; flex: 1; min-width: 0; overflow: hidden; background: var(--bg1); }
+.nd-viewport { position: relative; flex: 1; min-width: 0; overflow: hidden; background: var(--bg1); order: 1; }
 .nd-canvas { position: absolute; inset: 0; display: block; cursor: crosshair; touch-action: none; }
 .nd-toast { position: absolute; top: 14px; left: 50%; transform: translate(-50%, -8px); z-index: 50; pointer-events: none; opacity: 0; transition: opacity .18s, transform .18s; background: rgba(20, 21, 25, .94); border: 1px solid var(--bg5); border-radius: 8px; padding: 7px 16px; font-size: 13px; box-shadow: 0 6px 20px rgba(0, 0, 0, .4); max-width: 80%; text-align: center; }
 .nd-toast.show { opacity: 1; transform: translate(-50%, 0); }
@@ -318,7 +334,10 @@ kbd { font-family: ui-monospace, Consolas, monospace; font-size: 11px; backgroun
 .nd-assistbar > span { display: inline-flex; align-items: center; gap: 4px; color: #50dcff; margin-right: 4px; }
 
 /* hide UI (Tab) */
-body.nd-hide-ui #nd-app { grid-template-rows: 0 0 1fr 0; }
+/* only the canvas area is left, so it must be the only row (it used to land in a 0-height row) */
+body.nd-hide-ui #nd-app { grid-template-rows: 1fr; }
+.nd-showui { position: absolute; top: 10px; right: 10px; z-index: 40; display: none; }
+body.nd-hide-ui .nd-showui { display: inline-flex; }
 body.nd-hide-ui .nd-menubar, body.nd-hide-ui .nd-options, body.nd-hide-ui .nd-toolbox, body.nd-hide-ui .nd-dock, body.nd-hide-ui .nd-status { display: none; }
 
 /* small screens */
@@ -445,3 +464,10 @@ label.nd-ai-card { cursor: pointer; }
 .nd-busy-card { display: flex; align-items: center; gap: 12px; background: var(--bg2); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; box-shadow: 0 12px 40px rgba(0,0,0,.5); max-width: 420px; }
 .nd-spinner { width: 22px; height: 22px; border-radius: 50%; border: 3px solid rgba(255,255,255,.15); border-top-color: var(--acc2); animation: nd-spin .8s linear infinite; flex: none; }
 @keyframes nd-spin { to { transform: rotate(360deg); } }
+
+/* several columns: group names become thin dividers to save height */
+.nd-toolbox.multi .nd-tb-body > .nd-tool-group { font-size: 0; height: 1px; width: 70%; margin: 4px 0; background: var(--line2); justify-self: center; }
+.nd-tb-body > .nd-tool-group { justify-self: stretch; }
+.nd-toolbox.multi .nd-tb-body > .nd-fgbg, .nd-toolbox.multi .nd-tb-body > .nd-tool.qm { grid-column: auto; margin-top: 4px; }
+.nd-toolbox.multi .nd-tb-body > .nd-fgbg { width: 40px; }
+.nd-tb-sep { height: 2px; }

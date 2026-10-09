@@ -447,6 +447,7 @@
       assert(ND.AI.ORDER.join() === 'isnet,modnet,rmbg', 'three models');
       ND.AI.ORDER.forEach((id) => assert(/^https:\/\/huggingface\.co\//.test(M[id].url) && M[id].size > 1e7, id + ' url/size'));
       assert(M.isnet.commercial && M.modnet.commercial && !M.rmbg.commercial, 'RMBG is marked non-commercial');
+      assert(ND.AI.cpuOnly('isnet') && M.modnet.gpu !== false && M.rmbg.gpu !== false, 'ISNet runs on the CPU (WebGPU lacks ceil-mode MaxPool)');
       const was = window.ND_SINGLE_FILE; window.ND_SINGLE_FILE = true;
       assert(/single-file/.test(ND.AI.unsupported()), 'single-file build explains why AI is off');
       window.ND_SINGLE_FILE = was;

@@ -258,6 +258,9 @@
     ND.View.init(vp);
     buildTextEditor(vp);
     ND.Tools2.buildBar(vp);
+    const showUI = h('button.nd-btn.sm.nd-showui', { type: 'button', title: 'Show the menus and panels again (Tab)' }, ND.icon('fullscreen', 14), h('span', 'Show panels'));
+    showUI.addEventListener('click', () => ND.Menus.toggleUI());
+    vp.appendChild(showUI);
     ND.Toolbar.buildStatus($('nd-status'));
     setupPWA();
 

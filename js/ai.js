@@ -15,6 +15,8 @@
       url: HF + 'jellybox/isnet-general-use/resolve/main/isnet-general-use_1024.onnx', size: 178648008,
       licence: 'Apache 2.0', commercial: true, licenceNote: 'Free to use on any image, including commercial work.',
       prep: { w: 1024, h: 1024, mean: 0.5, std: 1 }, post: 'minmax',
+      // uses MaxPool with ceil_mode, which the WebGPU engine can't run yet ("not yet implemented")
+      gpu: false, speed: 'Runs on the CPU (about 10–40 s): the graphics-card engine can’t run one of its layers yet.',
     },
     modnet: {
       id: 'modnet', name: 'MODNet', title: 'People & portraits',
@@ -35,6 +37,12 @@
   const ORDER = ['isnet', 'modnet', 'rmbg'];
 
   const AI = { MODELS, ORDER, downloads: {} };
+
+  // Models that must run on the CPU: known ones, plus any that failed on the graphics card here before.
+  const CPU_KEY = 'nd-ai-cpu-models';
+  const learnedCpu = () => { try { return JSON.parse(localStorage.getItem(CPU_KEY) || '[]'); } catch (e) { return []; } };
+  AI.cpuOnly = (id) => MODELS[id].gpu === false || learnedCpu().includes(id);
+  AI.markCpuOnly = (id) => { try { const l = learnedCpu(); if (!l.includes(id)) { l.push(id); localStorage.setItem(CPU_KEY, JSON.stringify(l)); } } catch (e) { /* storage off */ } };
 
   // Why AI can't run here, or '' when it can.
   AI.unsupported = function () {
@@ -162,7 +170,7 @@
     const bytes = await r.clone().arrayBuffer();
     let info;
     try {
-      info = await AI.call({ type: 'load', key: id, bytes, preferGpu: !AI.noGpu }, [bytes]);
+      info = await AI.call({ type: 'load', key: id, bytes, preferGpu: !AI.noGpu && !AI.cpuOnly(id) }, [bytes]);
     } catch (e) {
       if (!/GPU_FAILED/.test(e.message)) throw e;
       // graphics card couldn't be used: start a fresh worker on the CPU
@@ -225,7 +233,19 @@
     const t = toTensor(src, M);
     status(AI.provider === 'webgpu' ? 'Finding the subject (graphics card)…' : 'Finding the subject (CPU — this can take 10–60 seconds)…');
     const input = AI.provider === 'webgpu' ? t.data.slice() : null; // kept in case the GPU result is unusable
-    let res = await AI.call({ type: 'run', data: t.data, dims: t.dims }, [t.data.buffer]);
+    let res;
+    try {
+      res = await AI.call({ type: 'run', data: t.data, dims: t.dims }, [t.data.buffer]);
+    } catch (e) {
+      if (!input) throw e;
+      // the graphics-card engine can't run something in this model: use the CPU for it from now on
+      console.warn('AI: ' + MODELS[id].name + ' failed on WebGPU, using the CPU instead —', e.message);
+      AI.markCpuOnly(id);
+      resetWorker();
+      await load(id, status);
+      status('Finding the subject (CPU — this can take 10–60 seconds)…');
+      res = await AI.call({ type: 'run', data: input.slice(), dims: t.dims }, [/* copy kept for the check below */]);
+    }
     if (res.provider === 'webgpu' && !usable(res.data)) {
       // some graphics drivers return blank results: switch to the CPU for good and run again
       AI.noGpu = true;

@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.5.2 — ISNet fix
+
+- **Fixed: ISNet stopped with "ceil_mode … not yet implemented in the WebGPU MaxPool kernel".** One of ISNet's layers (pooling with "ceil mode") isn't supported by the graphics-card (WebGPU) engine yet, so ISNet now always runs on the CPU, which supports it. Expect about 10–40 seconds per picture; the model card says so.
+- **Safety net for every model:** if a model hits anything the graphics-card engine can't run, Neon Draw re-runs it on the CPU straight away instead of showing an error, and remembers to use the CPU for that model from then on.
+
+## 2.5.1 — tool panel layout, Hide panels fix
+
+- **Tool panel in 1, 2 or 3 columns.**
+  - Use the number button at the top of the panel, or View ▸ Tool panel.
+  - **Automatic** (the default) picks the fewest columns that fit without scrolling.
+  - With several columns the group names turn into thin dividers, and the colour swatches sit beside the quick-mask button, to save height.
+- **Dock it left, dock it right, or let it float.**
+  - Drag the panel by its top bar to move it anywhere over the canvas. It snaps to the top and bottom edges.
+  - Drop it near the left edge, or next to the right-hand panels, to dock it there; a blue outline shows where it will snap.
+  - The pin button switches between floating and docked.
+  - The layout is remembered.
+- **Fixed: Hide panels (Tab) hid the canvas too.** The canvas area now fills the whole window. A small "Show panels" button appears at the top right, and Tab still works.
+
 ## 2.5 — AI background removal and AI masking
 
 ### AI models (Help ▸ AI models)

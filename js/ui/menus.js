@@ -174,6 +174,14 @@
       { label: 'Reference image…', run: () => ND.Reference.open() },
       { label: 'Right-click opens the pop-up palette', check: () => App.state.rightClick !== 'pick', run: () => { App.set('rightClick', App.state.rightClick === 'pick' ? 'palette' : 'pick'); App.toast(App.state.rightClick === 'pick' ? 'Right-click now picks a colour' : 'Right-click now opens the pop-up palette (Alt+right-click picks a colour)', 3000); } },
       { label: 'Hide panels', key: 'Tab', check: () => App.state.hideUI, run: () => M.toggleUI() },
+      { head: 'Tool panel' },
+      { label: 'Columns: automatic (fit the window)', check: () => !(App.state.toolboxCols >= 1), run: () => { App.set('toolboxCols', 0); ND.Toolbar.layoutToolbox(); } },
+      { label: '1 column', check: () => App.state.toolboxCols === 1, run: () => { App.set('toolboxCols', 1); ND.Toolbar.layoutToolbox(); } },
+      { label: '2 columns', check: () => App.state.toolboxCols === 2, run: () => { App.set('toolboxCols', 2); ND.Toolbar.layoutToolbox(); } },
+      { label: '3 columns', check: () => App.state.toolboxCols === 3, run: () => { App.set('toolboxCols', 3); ND.Toolbar.layoutToolbox(); } },
+      { label: 'Docked on the left', check: () => (App.state.toolboxMode || 'left') === 'left', run: () => ND.Toolbar.setToolboxMode('left') },
+      { label: 'Docked on the right', check: () => App.state.toolboxMode === 'right', run: () => ND.Toolbar.setToolboxMode('right') },
+      { label: 'Floating (drag it by its top bar)', check: () => App.state.toolboxMode === 'float', run: () => ND.Toolbar.setToolboxMode('float') },
       { label: 'Full screen', key: 'F11', run: () => M.fullscreen() },
       { sep: true },
       { head: 'Touch input' },
@@ -195,7 +203,12 @@
     doc().invalidateAll();
     App.toast(App.state.wrap ? 'Wrap-around on — strokes continue across the edges' : 'Wrap-around off');
   };
-  M.toggleUI = function () { App.set('hideUI', !App.state.hideUI); document.body.classList.toggle('nd-hide-ui', App.state.hideUI); setTimeout(() => ND.View.request(), 50); };
+  M.toggleUI = function () {
+    App.set('hideUI', !App.state.hideUI);
+    document.body.classList.toggle('nd-hide-ui', App.state.hideUI);
+    if (App.state.hideUI) App.toast('Panels hidden — press Tab or the button at the top right to bring them back', 3000);
+    setTimeout(() => { if (!App.state.hideUI && ND.Toolbar.layoutToolbox) ND.Toolbar.layoutToolbox(); ND.View.request(); }, 50);
+  };
   M.fullscreen = function () { if (document.fullscreenElement) document.exitFullscreen(); else if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen(); };
 
   M.build = function (bar) {

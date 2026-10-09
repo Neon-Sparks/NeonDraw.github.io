@@ -65,7 +65,7 @@
     grid: false, gridSize: 64, pixelGrid: true, wrap: false, showSymmetry: true, hideUI: false,
     dockWidth: 300, collapsed: {},
     touchMode: 'auto',
-    rightClick: 'palette', favBrushes: null, recentCommands: [], smartAI: false, aiModel: null, aiRemember: false, aiClean: true,
+    rightClick: 'palette', favBrushes: null, recentCommands: [], smartAI: false, aiModel: null, aiRemember: false, aiClean: true, toolboxMode: 'left', toolboxCols: 0, toolboxPos: null,
   });
 
   const App = {
@@ -780,13 +780,13 @@
       fillPattern: s.fillPattern, gradType: s.gradType, gradTo: s.gradTo, dockWidth: s.dockWidth, collapsed: s.collapsed,
       gridSize: s.gridSize, palette: App.palette, palettes: App.userPalettes, shapeFill: s.shapeFill, shapeStroke: s.shapeStroke, shapeWidth: s.shapeWidth,
       lineUseBrush: s.lineUseBrush, touchMode: s.touchMode, healSize: s.healSize, liqSize: s.liqSize, liqStrength: s.liqStrength, liqMode: s.liqMode, fillGap: s.fillGap, rulers: s.rulers,
-      rightClick: s.rightClick, favBrushes: s.favBrushes, lastPaper: s.lastPaper, harmony: s.harmony, smartAI: s.smartAI, aiModel: s.aiModel, aiRemember: s.aiRemember, aiClean: s.aiClean, recentCommands: s.recentCommands, maskView: s.maskView, maskParams: s.maskParams,
+      rightClick: s.rightClick, favBrushes: s.favBrushes, lastPaper: s.lastPaper, harmony: s.harmony, smartAI: s.smartAI, aiModel: s.aiModel, aiRemember: s.aiRemember, aiClean: s.aiClean, toolboxMode: s.toolboxMode, toolboxCols: s.toolboxCols, toolboxPos: s.toolboxPos, recentCommands: s.recentCommands, maskView: s.maskView, maskParams: s.maskParams,
     });
   }, 600);
   App.loadPrefs = function () {
     const p = ND.Store.prefs(), s = this.state;
     if (p.brush) s.brush = ND.Brush.normalise(p.brush);
-    ['brushName', 'fg', 'bg', 'recent', 'eraserSize', 'toolSettings', 'stamp', 'stampSize', 'stampMode', 'stampRandom', 'fillPattern', 'gradType', 'gradTo', 'dockWidth', 'collapsed', 'gridSize', 'shapeFill', 'shapeStroke', 'shapeWidth', 'lineUseBrush', 'touchMode', 'healSize', 'liqSize', 'liqStrength', 'liqMode', 'fillGap', 'rulers', 'rightClick', 'favBrushes', 'lastPaper', 'harmony', 'smartAI', 'aiModel', 'aiRemember', 'aiClean', 'recentCommands', 'maskView', 'maskParams'].forEach((k) => { if (p[k] != null) s[k] = p[k]; });
+    ['brushName', 'fg', 'bg', 'recent', 'eraserSize', 'toolSettings', 'stamp', 'stampSize', 'stampMode', 'stampRandom', 'fillPattern', 'gradType', 'gradTo', 'dockWidth', 'collapsed', 'gridSize', 'shapeFill', 'shapeStroke', 'shapeWidth', 'lineUseBrush', 'touchMode', 'healSize', 'liqSize', 'liqStrength', 'liqMode', 'fillGap', 'rulers', 'rightClick', 'favBrushes', 'lastPaper', 'harmony', 'smartAI', 'aiModel', 'aiRemember', 'aiClean', 'toolboxMode', 'toolboxCols', 'toolboxPos', 'recentCommands', 'maskView', 'maskParams'].forEach((k) => { if (p[k] != null) s[k] = p[k]; });
     if (p.text) Object.assign(s.text, p.text);
     if (p.palette) App.palette = p.palette;
     if (p.palettes) App.userPalettes = p.palettes;

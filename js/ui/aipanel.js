@@ -23,7 +23,7 @@
     const radio = o.pick ? h('input', { type: 'radio', name: 'nd-ai-model', value: id }) : null;
     const el = h((o.pick ? 'label' : 'div') + '.nd-ai-card' + (M.commercial ? '' : '.nc'),
       h('div.nd-ai-head', radio, h('b', M.name), h('span.nd-ai-title', ' — ' + M.title), h('span.grow'), h('span.nd-ai-size', MB(M.size))),
-      h('div.nd-ai-best', M.best),
+      h('div.nd-ai-best', M.best + (M.speed ? ' · ' + M.speed : '')),
       h('div.nd-ai-licence', h('span.nd-ai-badge' + (M.commercial ? '.ok' : '.nc'), M.commercial ? 'Free for commercial use' : 'Non-commercial use only'), h('span', ' ' + M.licence + '. ' + M.licenceNote)),
       h('div.nd-row.tight', status, h('span.grow'), btns), bar);
     el.radio = radio;
@@ -73,7 +73,7 @@
       h('p', 'AI models find the subject of a photo for Remove background, AI masks and AI selections. Download the ones you want once; they are stored in this browser and then work offline. Images are processed on your own computer and are never uploaded.'),
       why ? unsupportedBox(why) : null,
       ...cards,
-      h('div.nd-hint', 'Speed: with a graphics card that supports WebGPU (Chrome, Edge) a picture takes about a second; on the CPU expect 2–3 s for MODNet and 10–40 s for ISNet / RMBG.'),
+      h('div.nd-hint', 'Speed: with a graphics card that supports WebGPU (Chrome, Edge) a picture takes about a second; on the CPU expect 2–3 s for MODNet and 10–40 s for ISNet / RMBG. ISNet always uses the CPU for now. If a model ever fails on the graphics card, Neon Draw switches it to the CPU automatically.'),
       usage);
     if (why) cards.forEach((c) => c.querySelectorAll('button').forEach((b) => { b.disabled = true; }));
     showUsage();
