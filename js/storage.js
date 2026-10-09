@@ -24,7 +24,7 @@
   function project(doc, enc) {
     return {
       app: 'pigment', version: 3, width: doc.width, height: doc.height, name: doc.name, backgroundColor: doc.backgroundColor,
-      guides: doc.guides, assistants: doc.assistants,
+      guides: doc.guides, assistants: doc.assistants, paper: doc.paper || null,
       layers: flatList(doc).map(({ node: n, depth }) => ({
         type: n.type, name: n.name, visible: n.visible, opacity: n.opacity, blendMode: n.blendMode, isGroup: n.isGroup, depth,
         locked: n.locked, alphaLock: n.alphaLock, clip: n.clip, collapsed: !!n.collapsed,
@@ -56,6 +56,7 @@
     doc.backgroundColor = s.backgroundColor || null;
     doc.guides = Array.isArray(s.guides) ? s.guides : [];
     doc.assistants = Array.isArray(s.assistants) ? s.assistants : [];
+    doc.paper = ND.Paper ? ND.Paper.normalise(s.paper) : null;
     doc.root.children = [];
     const stack = [doc.root];
     for (const e of s.layers || []) {
@@ -123,6 +124,20 @@
         r.onerror = () => res(null);
       });
     } catch (e) { return null; }
+  }
+  // small key/value helpers on the same database (used for recent-file handles)
+  async function idbGet(key) {
+    try {
+      const db = await idb();
+      return await new Promise((res) => { const r = db.transaction('docs', 'readonly').objectStore('docs').get(key); r.onsuccess = () => res(r.result); r.onerror = () => res(undefined); });
+    } catch (e) { return undefined; }
+  }
+  async function idbSet(key, val) {
+    try {
+      const db = await idb();
+      await new Promise((res, rej) => { const t = db.transaction('docs', 'readwrite'); t.objectStore('docs').put(val, key); t.oncomplete = res; t.onerror = () => rej(t.error); });
+      return true;
+    } catch (e) { return false; }
   }
   async function clearAutosave() {
     try {
@@ -388,5 +403,5 @@
   function getJSON(key, def) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : def; } catch (e) { return def; } }
   function setJSON(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); return true; } catch (e) { return false; } }
 
-  ND.Store = { hasLiveOnly, serialize, serializeAsync, restore, deserialize, autosave, autosaveRecord, loadAutosave, clearAutosave, exportORA, importORA, exportPSD, zip, unzip, prefs, savePrefs, getJSON, setJSON };
+  ND.Store = { hasLiveOnly, serialize, serializeAsync, restore, deserialize, autosave, autosaveRecord, idbGet, idbSet, loadAutosave, clearAutosave, exportORA, importORA, exportPSD, zip, unzip, prefs, savePrefs, getJSON, setJSON };
 })();

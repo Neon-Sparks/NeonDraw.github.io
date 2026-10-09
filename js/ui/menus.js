@@ -8,13 +8,24 @@
   const needSel = (fn) => () => { if (!doc().selectionMask) return App.toast('Make a selection first'); fn(); };
   const selOp = (label, fn) => needSel(async () => { const v = await D().number(label, 'Pixels', 5, 1, 500, 'px'); if (v) { const m = fn(doc(), v); if (m) doc().changeSelection(label, m); } });
 
+  // File ▸ recent files (only where the browser can reopen files by itself)
+  const recentItems = () => {
+    const list = ND.Files.recentList();
+    if (!list.length) return [];
+    return [{ head: 'Open recent' }, ...list.map((r) => ({ label: r.name, run: () => ND.Files.openRecent(r) })), { label: 'Clear recent files', run: () => ND.Files.clearRecent() }, { sep: true }];
+  };
   M.menus = () => ({
-    File: [
+    File: () => [
       { label: 'New…', key: 'Ctrl+N', run: () => D().newDoc() },
-      { label: 'Open…', key: 'Ctrl+O', run: () => document.getElementById('nd-open').click() },
+      { label: 'Open…', key: 'Ctrl+O', run: () => ND.Files.open() },
+      ...recentItems(),
       { label: 'Import image as layer…', key: 'Ctrl+Shift+O', run: () => document.getElementById('nd-import').click() },
       { sep: true },
-      { label: 'Save project (.ndraw)', key: 'Ctrl+S', run: () => App.saveProject() },
+      { label: ND.Files.supported ? 'Save' : 'Save project (download .ndraw)', key: 'Ctrl+S', run: () => ND.Files.save() },
+      ...(ND.Files.supported ? [
+        { label: 'Save as…', key: 'Ctrl+Alt+S', run: () => ND.Files.saveAs() },
+        { label: 'Download a copy (.ndraw)', run: () => App.saveProject() },
+      ] : []),
       { sep: true },
       { label: 'Export PNG', key: 'Ctrl+Shift+S', run: () => App.exportImage('png') },
       { label: 'Export JPEG', run: () => App.exportImage('jpeg', 0.92) },
@@ -63,6 +74,7 @@
       { head: 'Adjustment layers (editable)' },
       ...ND.Adjust.KINDS.map((k) => ({ label: k.label + (k.fill ? ' fill' : ''), run: () => App.addAdjustment(k.id) })),
       { sep: true },
+      { label: 'Paper & texture…', run: () => D().paper() },
       { label: 'Set background colour from BG', run: () => { doc().backgroundColor = App.state.bg; App.toast('Eraser on the background layer now paints ' + App.state.bg); } },
       { label: 'Flatten image', run: () => doc().flattenImage() },
     ],
@@ -79,7 +91,11 @@
       { label: 'Group layer', key: 'Ctrl+G', run: () => doc().groupActive() },
       { label: 'Ungroup', key: 'Ctrl+Shift+G', run: () => doc().ungroupActive() },
       { sep: true },
-      { label: 'Remove background (as mask)', run: () => App.removeBackground() },
+      { label: 'Remove background with AI…', run: () => App.aiRemoveBackground() },
+      { label: 'Remove background (quick, no AI)', run: () => App.removeBackground() },
+      { label: 'AI mask: hide the background…', run: () => App.aiMask(false) },
+      { label: 'AI mask: hide the subject…', run: () => App.aiMask(true) },
+      { label: 'Refine & clean edges (layer mask)', run: () => App.cleanEdges() },
       { label: 'Add layer mask', run: () => App.addMaskSmart() },
       { label: 'Add mask (hide all)', run: () => doc().addMask(false, true) },
       { label: 'Edit mask / layer', key: '\\', run: () => doc().setEditMask(!doc().editMask) },
@@ -106,6 +122,9 @@
       { label: 'Reselect', key: 'Ctrl+Shift+D', run: () => { if (App.lastSelection) doc().changeSelection('Reselect', App.lastSelection); } },
       { label: 'Invert selection', key: 'Ctrl+Shift+I', run: () => { const d = doc(), b = d.selectionMask; d.invertSelection(); const a = d.selectionMask; d.history.push({ label: 'Invert Selection', undo: () => d.setSelection(b), redo: () => d.setSelection(a) }); } },
       { label: 'Select subject', run: () => App.selectSubject() },
+      { label: 'Select subject with AI…', run: () => App.aiSelect(false) },
+      { label: 'Select background with AI…', run: () => App.aiSelect(true) },
+      { label: 'Select and Mask…', key: 'Ctrl+Alt+R', run: () => ND.SelectMask.open() },
       { label: 'Quick select tool', key: 'A', run: () => App.setTool('smartsel') },
       { label: 'Select opaque (active layer)', run: () => doc().changeSelection('Select Opaque', ND.Sel.opaque(doc(), doc().active)) },
       { sep: true },
@@ -153,6 +172,7 @@
       { label: 'Wrap-around mode (seamless tiles)', key: 'Shift+W', check: () => App.state.wrap, run: () => M.toggleWrap() },
       { sep: true },
       { label: 'Reference image…', run: () => ND.Reference.open() },
+      { label: 'Right-click opens the pop-up palette', check: () => App.state.rightClick !== 'pick', run: () => { App.set('rightClick', App.state.rightClick === 'pick' ? 'palette' : 'pick'); App.toast(App.state.rightClick === 'pick' ? 'Right-click now picks a colour' : 'Right-click now opens the pop-up palette (Alt+right-click picks a colour)', 3000); } },
       { label: 'Hide panels', key: 'Tab', check: () => App.state.hideUI, run: () => M.toggleUI() },
       { label: 'Full screen', key: 'F11', run: () => M.fullscreen() },
       { sep: true },
@@ -163,6 +183,8 @@
     ],
     Help: [
       { label: 'Shortcuts & tips', key: 'F1', run: () => D().help() },
+      { label: 'Command palette…', key: 'Ctrl+K', run: () => ND.Command.open() },
+      { label: 'AI models (download & manage)…', run: () => ND.AIUI.manager() },
       { label: 'Install Neon Draw as an app…', run: () => App.pwa.install() },
       { label: 'About Neon Draw', run: () => D().about() },
     ],

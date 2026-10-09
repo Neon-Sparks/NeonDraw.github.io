@@ -236,10 +236,12 @@
       navCtrls.forEach((c) => c.refresh());
     }
 
-    const refreshSoon = U.debounce(() => {
+    const refreshNow = () => {
       if (tab === 'layers') { renderProps(); renderList(); }
       else if (tab === 'history') render();
-    }, 30);
+    };
+    // the opacity slider lives in this panel: don't rebuild it while it's being dragged
+    const refreshSoon = U.debounce(() => C.whenFree(root, refreshNow), 30);
     const thumbsSoon = U.debounce(() => { if (tab === 'layers') refreshThumbs(); if (tab === 'nav') drawNav(); }, 250);
     App.on('doc', (t) => { if (t === 'layers' || t === 'active' || t === 'history' || t === 'resize') refreshSoon(); thumbsSoon(); });
     App.on('docchange', render);

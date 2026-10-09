@@ -14,7 +14,7 @@
     sizeJitter: 0, opacityJitter: 0, angleJitter: 0, angleMode: 'fixed', hueJitter: 0, satJitter: 0, valJitter: 0,
     taper: 0, speedSize: 0, wetEdges: 0, bleed: 0, bristles: 24, blend: 'normal', variant: 'sketchy',
     hatchAngle: 45, cross: false, pixelPerfect: true, particle: 1, cloneAligned: false, lineWidth: 1,
-    taperOut: 0, pressurePts: null, load: 0, dualTip: null, dualSize: 0.5, dualCount: 3, splay: 0.5,
+    taperOut: 0, pressurePts: null, load: 0, dryness: 0, paperResponse: -1, dualTip: null, dualSize: 0.5, dualCount: 3, splay: 0.5,
   };
   // Engines whose dabs are recorded so the end of the stroke can be tapered when the pen lifts.
   const LOGGED = { pixel: 1, airbrush: 1, watercolor: 1, mixer: 1 };
@@ -81,6 +81,14 @@
       this.tex = this.s.texture && eng !== 'watercolor' ? ND.Textures.get(this.s.texture) : null;
       // watercolour lays an even wash (dabs merge rather than build up) and "dries" at the end
       this.wcTex = eng === 'watercolor' && this.s.texture ? ND.Textures.get(this.s.texture) : null;
+      // the document's paper: its tooth replaces / strengthens the brush grain depending on the medium
+      const pp = ND.Paper ? ND.Paper.forStroke(doc, this.s, eng, this.erasing) : null;
+      this.paper = pp;
+      if (pp) {
+        if (eng === 'watercolor') { this.wcTex = pp.tex; this.wcStr = pp.strength; this.wcScale = pp.scale; }
+        else if (eng === 'bristle') this.paperBr = pp;
+        else if (eng === 'pixel' || eng === 'airbrush' || eng === 'mixer') { this.tex = pp.tex; this.texStr = pp.strength; this.texScale = pp.scale; }
+      }
       this.fillTile = this.s.fillPattern && !this.erasing ? ND.Patterns.tileColoured(this.s.fillPattern, this.colour) : null;
       this.sprites = this.s.pattern && !this.erasing ? ND.Patterns.sprites(this.s.pattern) : null;
       this.spriteInfo = this.sprites ? ND.Patterns.spriteInfo(this.s.pattern) : null;
@@ -97,7 +105,11 @@
         this.backup = new ND.TileBackup(this.surf.canvas);
       } else {
         const paintBg = this.erasing && this.surf.kind === 'pixels' && doc.isBackgroundLayer(doc.active);
-        if (paintBg) { this.erasing = false; this.colour = doc.backgroundColor; this.rgb = U.hexToRgb(this.colour); this.fillTile = null; this.sprites = null; }
+        if (paintBg) {
+          this.erasing = false; this.colour = doc.backgroundColor; this.rgb = U.hexToRgb(this.colour); this.fillTile = null; this.sprites = null; this.tex = null;
+          // erasing on a paper background brings the paper (with its texture) back
+          if (ND.Paper && ND.Paper.hasTexture(doc.paper) && doc.paper.show > 0) { this.fillTile = ND.Paper.tile(doc.paper); this.fillScale = 1; }
+        }
         const body = this.engine === 'watercolor' ? U.clamp(s.flow * 3.5, 0.05, 1) : 1;
         doc.beginStroke({ mode: this.erasing ? 'erase' : 'paint', blend: this.erasing ? 'normal' : s.blend || 'normal', opacity: s.opacity * body });
       }
@@ -408,7 +420,8 @@
     texturedDab(tipC, ox, oy, colour, alpha, pt) {
       const s = this.s, tex = this.tex, N = tex.size, D = tipC.width;
       const a = ND.Tips.alpha(tipC), c = U.canvas(D, D), x = U.ctx(c), id = x.createImageData(D, D), d = id.data;
-      const [r, g, b] = U.hexToRgb(colour), p = this.pressure(pt), str = s.textureStrength, sc = 1 / Math.max(0.1, s.textureScale);
+      const [r, g, b] = U.hexToRgb(colour), p = this.pressure(pt), str = this.texStr != null ? this.texStr : s.textureStrength;
+      const sc = 1 / Math.max(0.1, this.texScale != null ? this.texScale : s.textureScale);
       const bx = Math.floor(ox), by = Math.floor(oy);
       for (let j = 0; j < D; j++) {
         const ty = ((((by + j) * sc) | 0) % N + N) % N;
@@ -435,7 +448,7 @@
       x.drawImage(tipC, 0, 0);
       x.globalCompositeOperation = 'source-in';
       const pat = x.createPattern(this.fillTile, 'repeat');
-      const sc = this.s.textureScale || 1;
+      const sc = this.fillScale || this.s.textureScale || 1;
       if (pat.setTransform) pat.setTransform(new DOMMatrix().translate(-ox, -oy).scale(sc));
       x.fillStyle = pat;
       x.fillRect(0, 0, D, D);
@@ -519,7 +532,9 @@
     // settles into the paper grain and varies in density.
     dry() {
       const doc = this.doc, s = this.s;
-      const R = Math.max(2, s.size * 0.12), pad = Math.ceil(R * 2) + 2;
+      // absorbent paper lets the wash spread further and feather; hard-sized paper keeps it crisp
+      const absorb = this.paper ? this.paper.absorb : 0;
+      const R = Math.max(2, s.size * 0.12 * (1 + absorb * 0.7)), pad = Math.ceil(R * 2) + 2;
       const r = U.clipRect({ x: this.bbox.x - pad, y: this.bbox.y - pad, w: this.bbox.w + pad * 2, h: this.bbox.h + pad * 2 }, doc.width, doc.height);
       if (!r || !doc.stroke) return;
       const body = U.clamp(s.flow * 3.5, 0.05, 1), buf = doc.strokeBuffer, bx = U.ctx(buf);
@@ -527,10 +542,10 @@
       U.ctx(region).drawImage(buf, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
       const bl = U.ctx(ND.Filters.blurCanvas(region, R)).getImageData(0, 0, r.w, r.h).data;
       const img = bx.getImageData(r.x, r.y, r.w, r.h), d = img.data;
-      const tex = this.wcTex, N = ND.Textures.SIZE, str = tex ? s.textureStrength : 0, sc = 1 / Math.max(0.1, s.textureScale || 1);
+      const tex = this.wcTex, N = ND.Textures.SIZE, str = tex ? (this.wcStr != null ? this.wcStr : s.textureStrength) : 0, sc = 1 / Math.max(0.1, this.wcScale || s.textureScale || 1);
       const noise = this.wcNoise || (this.wcNoise = U.fbm(256, 6, 3, (Math.random() * 1e6) | 0, 0.5));
       const edgeNoise = this.wcEdge || (this.wcEdge = U.fbm(256, 24, 3, (Math.random() * 1e6) | 0, 0.55));
-      const wet = s.wetEdges, bloom = 0.15 + s.bleed * 0.35;
+      const wet = s.wetEdges * (this.paper ? 1.3 - absorb * 0.7 : 1), bloom = 0.15 + s.bleed * 0.35 + absorb * 0.25;
       const ss = (a, b, v) => { const t = U.clamp((v - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
       for (let y = 0; y < r.h; y++) {
         for (let x = 0; x < r.w; x++) {
@@ -637,7 +652,10 @@
         for (let i = 0; i < n; i++) {
           const u = (i / (n - 1) - 0.5) + (Math.random() - 0.5) * (0.9 / n);
           const shade = 1 + (Math.random() - 0.5) * 0.22;
-          arr.push({ u, v: (Math.random() - 0.5) * 0.35, w: 0.5 + Math.random() * 1.7, ink: 0.7 + Math.random() * 0.3, decay: 0.2 + Math.random() * 0.7, shade,
+          const decay = 0.2 + Math.random() * 0.7;
+          // a bristle never runs completely dry: it settles at a streaky "dry-brush" level instead
+          const floor = U.clamp(0.62 - decay * 0.45 - (s.dryness || 0) * 0.3, 0.12, 0.6);
+          arr.push({ u, v: (Math.random() - 0.5) * 0.35, w: 0.5 + Math.random() * 1.7, ink: 0.75 + Math.random() * 0.25, decay, floor, shade,
             rgb: [this.rgb[0] * shade, this.rgb[1] * shade, this.rgb[2] * shade], last: null, wob: Math.random() * 10 });
         }
         L.state.br = arr;
@@ -663,11 +681,11 @@
       ctx.lineJoin = 'round';
       for (const b of L.state.br) {
         b.wob += seg * 0.05;
-        const u = b.u + Math.sin(b.wob) * 0.012;
+        const u = b.u + Math.sin(b.wob) * 0.018 + Math.sin(b.wob * 0.37 + b.shade * 9) * 0.012;
         const bx = pt.x + cx * u * spread + fx * b.v * size * 0.3;
         const by = pt.y + cy * u * spread + fy * b.v * size * 0.3;
         if (b.last && !first) {
-          b.ink *= Math.exp((-seg * b.decay) / Math.max(10, len));
+          b.ink = b.floor + (b.ink - b.floor) * Math.exp((-seg * b.decay) / Math.max(10, len));
           if (under) {
             const ix = Math.round(bx) - ux, iy = Math.round(by) - uy;
             if (ix >= 0 && iy >= 0 && ix < uw && iy < uh) {
@@ -682,19 +700,32 @@
               }
             }
           }
-          let a = Math.min(1, s.flow * b.ink * (s.pressureOpacity ? Math.max(0.1, p) : 1));
-          if (b.ink < 0.45) a *= Math.random() < b.ink * 1.8 ? 1 : 0.15; // dry-brush breaks
-          if (a > 0.01) {
-            ctx.globalAlpha = a;
-            ctx.strokeStyle = this.erasing ? '#000' : U.rgbToHex(b.rgb[0], b.rgb[1], b.rgb[2]);
-            ctx.lineWidth = thick * b.w * (s.pressureSize ? 0.4 + p * 0.6 : 1);
-            ctx.beginPath(); ctx.moveTo(b.last.x, b.last.y); ctx.lineTo(bx, by); ctx.stroke();
+          const a0 = Math.min(1, s.flow * b.ink * (s.pressureOpacity ? Math.max(0.1, p) : 1));
+          ctx.strokeStyle = this.erasing ? '#000' : U.rgbToHex(b.rgb[0], b.rgb[1], b.rgb[2]);
+          ctx.lineWidth = thick * b.w * (s.pressureSize ? 0.4 + p * 0.6 : 1);
+          // long segments are split into short pieces so dry-brush breaks and paper tooth vary along the mark
+          const pieces = Math.max(1, Math.min(24, Math.ceil(Math.hypot(bx - b.last.x, by - b.last.y) / 3)));
+          for (let k = 0; k < pieces; k++) {
+            const t0 = k / pieces, t1 = (k + 1) / pieces;
+            const x0 = b.last.x + (bx - b.last.x) * t0, y0 = b.last.y + (by - b.last.y) * t0, x1 = b.last.x + (bx - b.last.x) * t1, y1 = b.last.y + (by - b.last.y) * t1;
+            let a = a0;
+            // dry-brush breaks: the thinner the paint, the more often a bristle skips
+            if (b.ink < 0.5) { b.gap = (b.gap || 0) * 0.7 + (Math.random() < 0.3 + b.ink * 1.3 ? 0 : 0.3); a *= 1 - Math.min(0.85, b.gap * 1.6); }
+            if (this.paperBr) a *= this.paperCoverage((x0 + x1) / 2, (y0 + y1) / 2, p); // paint skips the valleys of the paper / canvas
+            if (a > 0.01) { ctx.globalAlpha = a; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke(); }
           }
         }
         b.last = { x: bx, y: by };
       }
       ctx.restore();
       this.touch(pt.x, pt.y, spread / 2 + size / 2 + seg + 4);
+    }
+
+    // how much paint a bristle leaves at (x, y) on the paper's tooth
+    paperCoverage(x, y, p) {
+      const pp = this.paperBr, N = pp.tex.size, sc = 1 / Math.max(0.1, pp.scale);
+      const h = pp.tex.data[((((y * sc) | 0) % N) + N) % N * N + ((((x * sc) | 0) % N) + N) % N];
+      return ND.Textures.coverage(h, p, pp.strength);
     }
 
     /* ---------- sketchy / harmony ---------- */

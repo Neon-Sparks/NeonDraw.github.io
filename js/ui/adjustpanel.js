@@ -15,12 +15,11 @@
     root.appendChild(C.section('adjustments', 'Adjustments', h('div', grid, h('div.nd-hint', 'Adjustment layers change everything below them and stay editable. Paint black on their mask to hide the effect.'))));
     const props = h('div.nd-props');
     root.appendChild(C.section('properties', 'Properties', props));
-    let shownFor = null, internal = false;
+    let internal = false;
     const render = () => {
       const d = App.doc;
       if (!d) return;
       const n = d.active;
-      shownFor = n;
       U.clear(props);
       if (!n) return;
       props.appendChild(h('div.nd-props-head', n.isAdjust ? h('span.nd-adjic', ND.Adjust.find(n.kind).icon) : ND.icon(n.isGroup ? 'folder' : 'image', 16), h('b', n.name)));
@@ -39,13 +38,9 @@
       }
     };
     App.on('doc', (t) => {
-      const d = App.doc;
       if (internal) return;
-      if (t === 'active' || t === 'history' || t === 'resize' || (t === 'layers' && (!d || d.active !== shownFor || !shownFor || !shownFor.isAdjust))) render();
-      else if (t === 'layers' && d.active === shownFor) {
-        // property change from elsewhere (undo, layer panel): refresh only the header & mask buttons
-        render();
-      }
+      // never rebuild under a slider that is being dragged; catch up when it's released
+      if (t === 'active' || t === 'history' || t === 'resize' || t === 'layers') C.whenFree(props, render);
     });
     App.on('docchange', render);
     App.on('adjust', render);

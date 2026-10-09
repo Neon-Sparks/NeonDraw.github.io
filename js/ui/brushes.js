@@ -71,6 +71,9 @@
         const cv = h('canvas', { width: 128, height: 40 });
         const tile = h('button.nd-preset' + (p.name === App.state.brushName ? '.active' : ''), { type: 'button', title: p.name + ' — ' + p.cat }, cv, h('span', p.name));
         tile.addEventListener('click', () => App.loadPreset(p));
+        const fav = ND.Popup.isFavourite(p.name), star = h('span.nd-preset-fav' + (fav ? '.on' : ''), { title: fav ? 'Remove from the pop-up palette' : 'Add to the pop-up palette (right-click the canvas)' }, fav ? '★' : '☆');
+        star.addEventListener('click', (e) => { e.stopPropagation(); ND.Popup.toggleFavourite(p.name); });
+        tile.appendChild(star);
         if (p.custom) {
           const del = h('span.nd-preset-del', { title: 'Delete preset' }, '×');
           del.addEventListener('click', (e) => { e.stopPropagation(); if (window.confirm('Delete brush preset “' + p.name + '”?')) App.deleteBrushPreset(p.name); });
@@ -83,6 +86,7 @@
       pump();
     }
     App.on('presets', () => { renderChips(); renderGrid(); });
+    App.on('favourites', () => renderGrid());
     App.on('brush', () => grid.querySelectorAll('.nd-preset').forEach((t) => t.classList.toggle('active', t.title.split(' — ')[0] === App.state.brushName)));
 
     /* ----- settings ----- */
@@ -116,7 +120,7 @@
       if (e === 'spray') eng.push(sl('Density', 'density', 1, 200), sl('Particle size', 'particle', 0.2, 6, { step: 0.1 }));
       if (e === 'watercolor') eng.push(sl('Wet edges', 'wetEdges', 0, 1, pct({ title: 'Pigment pooling at the edge when the stroke dries' })), sl('Colour bleed', 'bleed', 0, 1, pct({ title: 'Picks up and mixes the colours underneath' })));
       if (e === 'mixer') eng.push(sl('Mixing', 'bleed', 0, 1, pct({ title: 'How much paint is picked up from the canvas' })), sl('Paint load', 'load', 0, 5000, { title: 'Distance before the brush runs dry and only smears (0 = never)', unit: 'px' }));
-      if (e === 'bristle') eng.push(sl('Bristles', 'bristles', 3, 80), sl('Paint load', 'load', 0, 5000, { title: 'How far the paint lasts (0 = automatic)', unit: 'px' }), sl('Pick-up', 'bleed', 0, 1, pct({ title: 'Bristles drag wet paint they pass through' })), sl('Splay', 'splay', 0, 1, pct({ title: 'Bristles spread apart under pressure' })));
+      if (e === 'bristle') eng.push(sl('Bristles', 'bristles', 3, 80), sl('Paint load', 'load', 0, 8000, { title: 'How far the paint lasts before the brush goes streaky (0 = automatic)', unit: 'px' }), sl('Dryness', 'dryness', 0, 1, pct({ title: 'How broken and scratchy the stroke gets as the paint thins' })), sl('Pick-up', 'bleed', 0, 1, pct({ title: 'Bristles drag wet paint they pass through' })), sl('Splay', 'splay', 0, 1, pct({ title: 'Bristles spread apart under pressure' })));
       if (e === 'sketchy') eng.push(se('Style', 'variant', [['sketchy', 'Sketchy'], ['shaded', 'Shaded'], ['web', 'Web'], ['fur', 'Fur']]), sl('Density', 'density', 1, 60), sl('Line width', 'lineWidth', 0.5, 6, { step: 0.1 }));
       if (e === 'hatch') eng.push(sl('Hatch angle', 'hatchAngle', -90, 90, { unit: '°' }), ck('Cross-hatch', 'cross'), sl('Line width', 'lineWidth', 0.5, 8, { step: 0.1 }));
       if (e === 'pixelart') eng.push(ck('Pixel-perfect lines', 'pixelPerfect', 'Removes doubled corner pixels (1 px only)'), ck('Erase', 'erase'));
@@ -157,6 +161,14 @@
           b.pattern ? sl('Randomness', 'patternRandom', 0, 1, pct()) : null,
           b.pattern ? ck('Tint with colour', 'patternTint', 'Recolour the pattern with the foreground colour') : null));
       }
+      // how this brush reacts to the document's paper (Image ▸ Paper & texture)
+      const auto = ND.Paper.autoResponse(b, e), isAuto = !(b.paperResponse >= 0);
+      const resp = C.slider('Paper response', { min: 0, max: 1, step: 0.01, get: () => ND.Paper.response(B(), B().engine), set: (v) => App.setBrush({ paperResponse: v }), fmt: (v) => Math.round(v * 100), toValue: (v) => v / 100, unit: '%', title: 'How strongly the paper texture breaks up this brush (0% = ignores the paper)' });
+      ctrls.push(resp);
+      const paperInfo = App.doc && App.doc.paper ? 'On ' + ND.Paper.type(App.doc.paper.type).label.toLowerCase() : 'This document has no paper texture (Image ▸ Paper & texture…)';
+      settings.appendChild(grp('Paper', resp,
+        h('div.nd-row.tight', h('span.nd-hint', paperInfo + (isAuto ? ' · automatic for this kind of brush' : '')),
+          !isAuto ? C.button('Auto (' + Math.round(auto * 100) + '%)', () => { App.setBrush({ paperResponse: -1 }); renderSettings(); }, { cls: 'sm' }) : null)));
       const symm = ND.Toolbar.symmetryControls();
       symm.forEach((c) => c && ctrls.push(c));
       settings.appendChild(grp('Stabiliser & symmetry', sl('Smoothing', 'stabilizer', 0, 0.98, pct()), ...symm,
@@ -257,6 +269,8 @@
     });
     App.on('state', () => ctrls.forEach((c) => c.refresh && c.refresh()));
     App.on('patterns', renderSettings);
+    App.on('paper', renderSettings);
+    App.on('docchange', renderSettings);
     App.on('tips', renderSettings);
     renderChips();
     renderGrid();

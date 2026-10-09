@@ -65,6 +65,7 @@
     grid: false, gridSize: 64, pixelGrid: true, wrap: false, showSymmetry: true, hideUI: false,
     dockWidth: 300, collapsed: {},
     touchMode: 'auto',
+    rightClick: 'palette', favBrushes: null, recentCommands: [], smartAI: false, aiModel: null, aiRemember: false, aiClean: true,
   });
 
   const App = {
@@ -132,6 +133,7 @@
     r.unshift(hex);
     this.state.recent = r.slice(0, 18);
     this.emit('recent');
+    this.savePrefsSoon();
   };
   App.swapColours = function () { const s = this.state; const t = s.fg; s.fg = s.bg; s.bg = t; this.emit('colour'); };
   App.resetColours = function () { this.state.fg = '#000000'; this.state.bg = '#ffffff'; this.emit('colour'); };
@@ -172,12 +174,48 @@
     this.fitView();
     this.emit('doc', 'layers');
   };
-  App.newDocument = function (w, h, bg, name) {
+  App.newDocument = function (w, h, bg, name, paper, paperBackground) {
     const d = new ND.Doc(w, h, bg);
     d.name = name || 'Untitled';
     if (!bg) d.root.children[0].name = 'Layer 1';
+    d.paper = paper ? ND.Paper.normalise(paper) : null;
+    if (d.paper && paperBackground) {
+      // the background layer is the paper itself; paint goes on a layer above it
+      const L = d.root.children[0];
+      L.name = 'Paper';
+      d.backgroundColor = d.paper.tint;
+      U.ctx(L.canvas).drawImage(ND.Paper.render(d.paper, w, h), 0, 0);
+      d.invalidateAll();
+      const top = d.addLayer('Layer 1');
+      d.history.stack.length = 0; d.history.pos = 0;
+      d.active = top;
+    }
     this.setDoc(d);
     this.toast('New document ' + w + ' × ' + h);
+  };
+  // Change the document's paper (undoable); optionally repaint the bottom layer with it.
+  App.setPaper = function (pp, repaint) {
+    const d = this.doc, before = d.paper, after = pp ? ND.Paper.normalise(Object.assign({}, pp)) : null;
+    const L = d.root.children[0];
+    if (repaint && L && L.isPixel) {
+      const r = { x: 0, y: 0, w: d.width, h: d.height }, old = U.ctx(L.canvas).getImageData(0, 0, d.width, d.height);
+      const x = U.ctx(L.canvas);
+      x.clearRect(0, 0, d.width, d.height);
+      if (after) x.drawImage(ND.Paper.render(after, d.width, d.height), 0, 0); else { x.fillStyle = '#ffffff'; x.fillRect(0, 0, d.width, d.height); }
+      d.recordRegion(L, old, r, 'Paper');
+      const bgBefore = d.backgroundColor;
+      d.backgroundColor = after ? after.tint : '#ffffff';
+      const top = d.history.stack[d.history.pos - 1], u = top.undo, rd = top.redo;
+      top.undo = () => { u(); d.paper = before; d.backgroundColor = bgBefore; };
+      top.redo = () => { rd(); d.paper = after; d.backgroundColor = after ? after.tint : '#ffffff'; };
+      d.paper = after;
+      d.invalidateAll();
+    } else {
+      d.paper = after;
+      d.history.push({ label: 'Paper', undo: () => { d.paper = before; }, redo: () => { d.paper = after; } });
+    }
+    App.emit('paper');
+    this.toast(after ? 'Paper: ' + ND.Paper.type(after.type).label + ' — brushes now respond to its texture' : 'Paper removed — brushes paint as on a smooth surface', 3000);
   };
   App.fitView = function () {
     const el = document.getElementById('nd-viewport');
@@ -189,7 +227,7 @@
   App.zoomBy = function (f, sx, sy) { this.emit('zoomat', { f, sx, sy }); };
 
   /* ---------------- files ---------------- */
-  App.openFile = async function (file) {
+  App.openFile = async function (file, handle) {
     try {
       const n = file.name.toLowerCase();
       if (n.endsWith('.psd') || n.endsWith('.psb')) {
@@ -213,8 +251,16 @@
         this.setDoc(d);
         this.toast('Image opened');
       }
+      // remember where it came from so Ctrl+S can save back (projects) and it shows under Open recent
+      this.doc.fileHandle = handle || null;
+      if (handle && ND.Files) ND.Files.addRecent(handle);
+      this.markSaved();
     } catch (e) { console.error(e); this.toast('Could not open ' + file.name + ': ' + e.message, 3500); }
   };
+  // "dirty" = changed since the last save to a file (autosave to the browser is separate)
+  App.markSaved = function () { this.dirty = false; this.emit('saved'); };
+  App.on('doc', (t) => { if (t === 'history' && !App.dirty) { App.dirty = true; App.emit('saved'); } });
+  App.on('docchange', () => { App.dirty = false; App.emit('saved'); });
   App.importLayer = async function (file) {
     if (!this.doc) return;
     try {
@@ -242,7 +288,8 @@
     this.toast('Saving…', 10000);
     const data = await ND.Store.serializeAsync(d);
     U.download(U.safeName(d.name) + '.ndraw', new Blob([data], { type: 'application/json' }));
-    this.toast('Project saved');
+    this.markSaved();
+    this.toast('Project downloaded as ' + U.safeName(d.name) + '.ndraw');
   };
   App.exportImage = async function (fmt, quality) {
     const d = this.doc;
@@ -484,6 +531,41 @@
       this.toast('Background hidden with a layer mask — paint white to bring parts back, black to hide more', 4500);
     }, 30);
   };
+  // Tidy the edge of a masked paint layer (undoable): re-judge the soft edge from colour (so leftover
+  // background pixels drop out) and remove the old background colour from what remains.
+  App.cleanEdges = function (quiet) {
+    const d = this.doc, L = d.active;
+    if (!L || !L.isPixel || !L.mask) return this.toast('Select a paint layer that has a mask');
+    const W = d.width, H = d.height, mk = U.ctx(L.mask).getImageData(0, 0, W, H).data;
+    // only the area where the mask is partly transparent needs work
+    let x0 = W, y0 = H, x1 = -1, y1 = -1;
+    for (let y = 0; y < H; y += 2) for (let x = 0; x < W; x += 2) { const v = mk[(y * W + x) * 4]; if (v > 3 && v < 252) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; } }
+    if (x1 < 0) { if (!quiet) this.toast('The mask has no soft edges to clean'); return; }
+    const r = U.clipRect({ x: x0 - 24, y: y0 - 24, w: x1 - x0 + 48, h: y1 - y0 + 48 }, W, H);
+    const before = U.ctx(L.canvas).getImageData(r.x, r.y, r.w, r.h), px = before.data, alpha = new Float32Array(r.w * r.h);
+    for (let y = 0; y < r.h; y++) for (let x = 0; x < r.w; x++) alpha[y * r.w + x] = mk[((r.y + y) * W + r.x + x) * 4] / 255;
+    // size the edge zone to the mask's own soft edge: soft area ÷ outline length ≈ its width
+    let soft = 0, outline = 0;
+    for (let i = 0; i < alpha.length; i++) {
+      const v = alpha[i];
+      if (v > 0.05 && v < 0.95) soft++;
+      if (v >= 0.5 && i % r.w < r.w - 1 && i + r.w < alpha.length && (alpha[i + 1] < 0.5 || alpha[i + r.w] < 0.5)) outline++;
+    }
+    const radius = U.clamp(Math.ceil((soft / Math.max(1, outline)) * 0.6) + 2, 3, 60);
+    const res = ND.Refine.run(px, alpha, r.w, r.h, { radius, decontam: true, amount: 1 });
+    // updated mask (only inside the worked area)
+    const m = U.clone(L.mask), mid = new ImageData(r.w, r.h);
+    for (let i = 0; i < r.w * r.h; i++) { const v = res.alpha[i] * 255, j = i * 4; mid.data[j] = mid.data[j + 1] = mid.data[j + 2] = v; mid.data[j + 3] = 255; }
+    U.ctx(m).putImageData(mid, r.x, r.y);
+    d.setProps(L, { mask: m }, 'Refine Edge');
+    const out = new ImageData(r.w, r.h);
+    for (let i = 0; i < r.w * r.h; i++) { const j = i * 4; out.data[j] = res.colour[j]; out.data[j + 1] = res.colour[j + 1]; out.data[j + 2] = res.colour[j + 2]; out.data[j + 3] = px[j + 3]; }
+    const keep = new ImageData(new Uint8ClampedArray(px), r.w, r.h);
+    U.ctx(L.canvas).putImageData(out, r.x, r.y);
+    d.recordSurface({ kind: 'pixels', node: L, canvas: L.canvas }, keep, r, 'Clean Edge Colours');
+    d.invalidate(r);
+    if (!quiet) this.toast('Edge colours cleaned');
+  };
   App.toggleQuickMask = function () {
     const d = this.doc;
     if (ND.View.stroke) return;
@@ -698,12 +780,13 @@
       fillPattern: s.fillPattern, gradType: s.gradType, gradTo: s.gradTo, dockWidth: s.dockWidth, collapsed: s.collapsed,
       gridSize: s.gridSize, palette: App.palette, palettes: App.userPalettes, shapeFill: s.shapeFill, shapeStroke: s.shapeStroke, shapeWidth: s.shapeWidth,
       lineUseBrush: s.lineUseBrush, touchMode: s.touchMode, healSize: s.healSize, liqSize: s.liqSize, liqStrength: s.liqStrength, liqMode: s.liqMode, fillGap: s.fillGap, rulers: s.rulers,
+      rightClick: s.rightClick, favBrushes: s.favBrushes, lastPaper: s.lastPaper, harmony: s.harmony, smartAI: s.smartAI, aiModel: s.aiModel, aiRemember: s.aiRemember, aiClean: s.aiClean, recentCommands: s.recentCommands, maskView: s.maskView, maskParams: s.maskParams,
     });
   }, 600);
   App.loadPrefs = function () {
     const p = ND.Store.prefs(), s = this.state;
     if (p.brush) s.brush = ND.Brush.normalise(p.brush);
-    ['brushName', 'fg', 'bg', 'recent', 'eraserSize', 'toolSettings', 'stamp', 'stampSize', 'stampMode', 'stampRandom', 'fillPattern', 'gradType', 'gradTo', 'dockWidth', 'collapsed', 'gridSize', 'shapeFill', 'shapeStroke', 'shapeWidth', 'lineUseBrush', 'touchMode', 'healSize', 'liqSize', 'liqStrength', 'liqMode', 'fillGap', 'rulers'].forEach((k) => { if (p[k] != null) s[k] = p[k]; });
+    ['brushName', 'fg', 'bg', 'recent', 'eraserSize', 'toolSettings', 'stamp', 'stampSize', 'stampMode', 'stampRandom', 'fillPattern', 'gradType', 'gradTo', 'dockWidth', 'collapsed', 'gridSize', 'shapeFill', 'shapeStroke', 'shapeWidth', 'lineUseBrush', 'touchMode', 'healSize', 'liqSize', 'liqStrength', 'liqMode', 'fillGap', 'rulers', 'rightClick', 'favBrushes', 'lastPaper', 'harmony', 'smartAI', 'aiModel', 'aiRemember', 'aiClean', 'recentCommands', 'maskView', 'maskParams'].forEach((k) => { if (p[k] != null) s[k] = p[k]; });
     if (p.text) Object.assign(s.text, p.text);
     if (p.palette) App.palette = p.palette;
     if (p.palettes) App.userPalettes = p.palettes;
@@ -715,7 +798,12 @@
     if (!this.doc || this.saving || (!this.unsaved && !force)) return;
     this.saving = true;
     this.unsaved = false;
-    try { await ND.Store.autosave(this.doc); this.lastAutosave = Date.now(); this.emit('autosaved'); } catch (e) { this.unsaved = true; } finally { this.saving = false; }
+    try {
+      await ND.Store.autosave(this.doc);
+      // remember the file the document belongs to, so Ctrl+S still saves there after a restart
+      ND.Store.idbSet('autosave-handle', this.doc.fileHandle || null);
+      this.lastAutosave = Date.now(); this.emit('autosaved');
+    } catch (e) { this.unsaved = true; } finally { this.saving = false; }
   };
   App.on('doc', (t) => { if (t === 'history' || t === 'layers' || t === 'resize') App.unsaved = true; });
   App.on('docchange', () => { App.unsaved = true; });

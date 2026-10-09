@@ -72,9 +72,12 @@
       if (k === 'd' && e.shiftKey) return run(() => M.menus().Select[2].run());
       if (k === 'i' && e.shiftKey) return run(() => M.menus().Select[3].run());
       if (k === 's' && e.shiftKey) return run(() => App.exportImage('png'));
-      if (k === 's') return run(() => App.saveProject());
+      if (k === 's' && e.altKey) return run(() => ND.Files.saveAs());
+      if (k === 's') return run(() => ND.Files.save());
       if (k === 'o' && e.shiftKey) return run(() => document.getElementById('nd-import').click());
-      if (k === 'o') return run(() => document.getElementById('nd-open').click());
+      if (k === 'o') return run(() => ND.Files.open());
+      if (k === 'k' || (k === 'p' && e.shiftKey)) return run(() => ND.Command.open());
+      if (k === 'r' && e.altKey) return run(() => ND.SelectMask.open());
       if (k === 'n' && e.shiftKey) return run(() => d.addLayer());
       if (k === 'n') return run(() => ND.Dialogs.newDoc());
       if (k === 'c') return run(() => App.copy(e.shiftKey));
@@ -216,7 +219,7 @@
     // files opened with the installed app ("Open with → Neon Draw")
     if ('launchQueue' in window) {
       window.launchQueue.setConsumer(async (params) => {
-        for (const h of (params.files || [])) { try { App.openFile(await h.getFile()); } catch (e) { App.toast('Could not open that file'); } }
+        for (const fh of (params.files || [])) { try { await App.openFile(await fh.getFile(), fh); } catch (e) { App.toast('Could not open that file'); } }
       });
     }
     if (window.ND_SINGLE_FILE || !('serviceWorker' in navigator) || !/^https?:$/.test(location.protocol)) return;
@@ -238,6 +241,7 @@
   async function boot() {
     App.loadPrefs();
     await App.loadUserData();
+    await ND.Files.loadRecent();
     const $ = (id) => document.getElementById(id);
     ND.Menus.build($('nd-menus'));
     ND.Toolbar.buildToolbox($('nd-toolbox'));
@@ -268,10 +272,12 @@
       undo.disabled = !d.history.canUndo; redo.disabled = !d.history.canRedo;
       undo.title = d.history.canUndo ? 'Undo ' + d.history.stack[d.history.pos - 1].label + ' (Ctrl+Z)' : 'Nothing to undo';
       redo.title = d.history.canRedo ? 'Redo ' + d.history.stack[d.history.pos].label + ' (Ctrl+Shift+Z)' : 'Nothing to redo';
-      docName.textContent = d.name + ' — ' + d.width + '×' + d.height;
-      document.title = d.name + ' — Neon Draw';
+      const mark = App.dirty && d.fileHandle ? '● ' : '';
+      docName.textContent = mark + d.name + ' — ' + d.width + '×' + d.height;
+      docName.title = (d.fileHandle ? 'Saved as ' + d.fileHandle.name + (mark ? ' · unsaved changes (Ctrl+S)' : '') + '\n' : '') + 'Click to rename the document';
+      document.title = mark + d.name + ' — Neon Draw';
     };
-    App.on('doc', refreshTop); App.on('docchange', refreshTop);
+    App.on('doc', refreshTop); App.on('docchange', refreshTop); App.on('saved', refreshTop);
     App.on('doc', (t) => { if (t === 'selection' && App.doc.selectionMask) App.lastSelection = App.doc.selectionMask; });
 
     App.on('pickstamp', () => ND.Dialogs.stampPicker());
@@ -305,9 +311,10 @@
       const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
       if (!files.length) return;
       e.preventDefault();
-      files.forEach((f, i) => {
+      const handles = ND.Files.handlesFromDrop(e.dataTransfer), shift = e.shiftKey;
+      files.forEach(async (f, i) => {
         const n = f.name.toLowerCase();
-        if (n.endsWith('.ndraw') || n.endsWith('.ora') || n.endsWith('.psd') || n.endsWith('.psb') || n.endsWith('.pigment') || !App.doc || (i === 0 && e.shiftKey)) App.openFile(f);
+        if (n.endsWith('.ndraw') || n.endsWith('.ora') || n.endsWith('.psd') || n.endsWith('.psb') || n.endsWith('.pigment') || !App.doc || (i === 0 && shift)) App.openFile(f, handles[i] ? await handles[i] : null);
         else App.importLayer(f);
       });
     });
@@ -316,7 +323,11 @@
     const saved = await ND.Store.loadAutosave();
     let restored = false;
     if (saved) {
-      try { const doc = await ND.Store.restore(saved); App.setDoc(doc); App.unsaved = false; restored = true; ND.Dialogs.recovered(doc); } catch (e) { console.warn('autosave unreadable', e); }
+      try {
+        const doc = await ND.Store.restore(saved);
+        doc.fileHandle = (await ND.Store.idbGet('autosave-handle')) || null;
+        App.setDoc(doc); App.unsaved = false; restored = true; ND.Dialogs.recovered(doc);
+      } catch (e) { console.warn('autosave unreadable', e); }
     }
     if (!restored) { App.newDocument(1920, 1080, '#ffffff', 'Untitled'); ND.Dialogs.newDoc(); }
     App.emit('tool'); App.emit('brush'); App.emit('colour');

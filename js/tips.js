@@ -145,6 +145,46 @@
       const c = mk((x) => softDot(x, C, C, 126, 1));
       return alphaMap(c, (px, py, a) => a * Math.pow(U.clamp(Math.sin(n[py * S + px] * 18) * 0.5 + 0.5, 0, 1), 3));
     } },
+    { id: 'filbert', label: 'Filbert (oval bristles)', variants: 3, make: (seed) => {
+      // an oval of bristle marks with streaky density across the head
+      const r2 = U.rng(300 + seed), streak = new Float32Array(S);
+      for (let i = 0; i < S; i++) streak[i] = 0.45 + r2() * 0.55;
+      const c = mk((x) => { x.beginPath(); x.ellipse(C, C, 70, 112, 0, 0, U.TAU); x.fill(); });
+      return alphaMap(c, (px, py, a) => a * streak[px] * (0.75 + 0.25 * Math.sin(py * 0.4 + streak[px] * 9)));
+    } },
+    { id: 'fan', label: 'Fan brush', variants: 2, make: (seed) => mk((x, r) => {
+      x.lineCap = 'round';
+      for (let i = 0; i < 34; i++) {
+        const a = -Math.PI * 0.42 + (i / 33) * Math.PI * 0.84 + (r() - 0.5) * 0.05, len = 70 + r() * 40;
+        x.globalAlpha = 0.45 + r() * 0.55; x.lineWidth = 2 + r() * 3;
+        x.beginPath(); x.moveTo(C + Math.sin(a) * 40, C + 60 - Math.cos(a) * 40); x.lineTo(C + Math.sin(a) * (40 + len), C + 60 - Math.cos(a) * (40 + len)); x.stroke();
+      }
+    }, 320 + seed) },
+    { id: 'pastel', label: 'Pastel (side of the stick)', variants: 3, make: (seed) => {
+      const n = U.fbm(S, 48, 3, 340 + seed, 0.6), r2 = U.rng(345 + seed), row = new Float32Array(S);
+      for (let i = 0; i < S; i++) row[i] = 0.6 + r2() * 0.4;
+      const c = mk((x, r) => { x.save(); x.translate(C, C); x.scale(1, 0.34); blob(x, r, 0, 0, 118, 0.06, 64); x.restore(); }, 350 + seed);
+      return alphaMap(c, (px, py, a) => a * row[py] * U.clamp((n[py * S + px] - 0.22) * 2.4, 0, 1));
+    } },
+    { id: 'stipple', label: 'Stipple dots', variants: 3, make: (seed) => mk((x, r) => {
+      for (let i = 0; i < 90; i++) { const a = r() * U.TAU, d = Math.sqrt(r()) * 112, rad = 2 + r() * 5; x.globalAlpha = 0.6 + r() * 0.4; x.beginPath(); x.arc(C + Math.cos(a) * d, C + Math.sin(a) * d, rad, 0, U.TAU); x.fill(); }
+    }, 360 + seed) },
+    { id: 'scratch', label: 'Scratchy (vine charcoal)', variants: 3, make: (seed) => mk((x, r) => {
+      x.lineCap = 'round';
+      for (let i = 0; i < 40; i++) {
+        const y0 = C + (r() - 0.5) * 120, x0 = C - 110 + r() * 40, x1 = C + 70 + r() * 40;
+        x.globalAlpha = 0.25 + r() * 0.6; x.lineWidth = 1 + r() * 3.5;
+        x.beginPath(); x.moveTo(x0, y0); x.lineTo(x1, y0 + (r() - 0.5) * 14); x.stroke();
+      }
+    }, 380 + seed) },
+    { id: 'needles', label: 'Pine needles', variants: 3, make: (seed) => mk((x, r) => {
+      x.lineCap = 'round';
+      for (let i = 0; i < 46; i++) {
+        const a = r() * U.TAU, len = 50 + r() * 70;
+        x.globalAlpha = 0.5 + r() * 0.5; x.lineWidth = 1.5 + r() * 2;
+        x.beginPath(); x.moveTo(C + Math.cos(a) * 8, C + Math.sin(a) * 8); x.lineTo(C + Math.cos(a) * len, C + Math.sin(a) * len); x.stroke();
+      }
+    }, 400 + seed) },
   ];
 
   const baseCache = new Map();

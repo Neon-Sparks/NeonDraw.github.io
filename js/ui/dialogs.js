@@ -39,6 +39,52 @@
     });
   };
 
+  /* ---------------- paper picker (new document + Image ▸ Paper) ---------------- */
+  // Edits `pp` (a paper object) in place; onChange runs after every change.
+  D.paperPicker = function (pp, onChange) {
+    const Pp = ND.Paper, chips = h('div.nd-paper-grid'), tints = h('div.nd-paper-tints'), note = h('div.nd-hint.nd-paper-note');
+    const ctrls = [];
+    const change = () => { renderChips(); renderTints(); ctrls.forEach((c) => c.refresh()); note.textContent = Pp.type(pp.type).note; if (onChange) onChange(); };
+    function renderChips() {
+      U.clear(chips);
+      Pp.TYPES.forEach((t) => {
+        const prev = Pp.preview(Object.assign({}, pp, { type: t.id, texture: t.texture, grain: t.grain, tint: pp.type === t.id ? pp.tint : t.tint }), 72, 44);
+        const b = h('button.nd-paper-chip' + (pp.type === t.id ? '.active' : ''), { type: 'button', title: t.label + ' — ' + t.note }, prev, h('span', t.label));
+        b.addEventListener('click', () => { Object.assign(pp, Pp.make(t.id, { show: pp.show, scale: pp.scale })); change(); });
+        chips.appendChild(b);
+      });
+    }
+    function renderTints() {
+      U.clear(tints);
+      Pp.TINTS.forEach(([c, n]) => {
+        const b = h('button.nd-swatch' + (pp.tint === c ? '.active' : ''), { type: 'button', title: n + ' ' + c, style: { background: c } });
+        b.addEventListener('click', () => { pp.tint = c; change(); });
+        tints.appendChild(b);
+      });
+      const cust = C.colourInput(() => pp.tint, (v) => { pp.tint = v; if (onChange) onChange(); }, 'Any paper colour');
+      tints.appendChild(cust);
+    }
+    const sl = (label, key, min, max, title) => { const c = C.slider(label, { min, max, step: 0.01, get: () => pp[key], set: (v) => { pp[key] = v; if (onChange) onChange(); }, fmt: (v) => Math.round(v * 100), toValue: (v) => v / 100, unit: '%', title }); ctrls.push(c); return c; };
+    const el = h('div.nd-paper',
+      chips,
+      h('div.nd-row.tight', h('span.nd-lbl', 'Tint'), tints),
+      sl('Roughness', 'grain', 0, 1, 'How toothy the paper is — rough paper breaks up dry media and makes watercolour granulate'),
+      sl('Texture visible', 'show', 0, 1, 'How much of the paper texture you see (brushes still feel it at 0%)'),
+      sl('Grain size', 'scale', 0.5, 3, 'Size of the paper grain'),
+      note);
+    change();
+    return el;
+  };
+  D.paper = function () {
+    const d = App.doc, pp = Object.assign({}, d.paper || ND.Paper.make('none'));
+    const bottom = d.root.children[0], canRepaint = bottom && bottom.isPixel;
+    let repaint = canRepaint && !!d.backgroundColor;
+    const box = h('div', D.paperPicker(pp),
+      canRepaint ? C.check('Repaint the bottom layer (“' + bottom.name + '”) with this paper', () => repaint, (v) => { repaint = v; }) : null,
+      h('div.nd-hint', 'The paper changes how brushes behave: dry media catch its grain, watercolour granulates and spreads on absorbent paper, oils skip the canvas weave. Inks and pattern brushes barely notice.'));
+    D.modal('Paper & texture', box, [{ label: 'Cancel' }, { label: 'Apply', primary: true, action: () => App.setPaper(pp.type === 'none' && !repaint ? null : pp, repaint) }], { wide: true, noFocus: true });
+  };
+
   /* ---------------- new document ---------------- */
   D.newDoc = function () {
     const PRESETS = [
@@ -48,9 +94,11 @@
     ];
     const name = h('input.nd-field', { type: 'text', value: 'Untitled' });
     const w = num(1920, { min: 1, max: 16384 }), hh = num(1080, { min: 1, max: 16384 });
-    let bgMode = 'white';
+    let bgMode = App.state.lastPaper && App.state.lastPaper.type !== 'none' ? 'paper' : 'white';
+    const pp = Object.assign(ND.Paper.make('none'), App.state.lastPaper || {});
     const bgCol = C.colourInput(() => '#f4efe6', () => {}, 'Custom background colour');
-    const bgSeg = C.segmented([['white', 'White'], ['transparent', 'Transparent'], ['bg', 'BG colour'], ['custom', 'Custom']], () => bgMode, (v) => { bgMode = v; });
+    const bgSeg = C.segmented([['paper', 'Paper', 'The paper below, with its texture'], ['white', 'White'], ['transparent', 'Transparent'], ['bg', 'BG colour'], ['custom', 'Custom']], () => bgMode, (v) => { bgMode = v; });
+    const paperBox = D.paperPicker(pp, () => { if (pp.type !== 'none' && bgMode !== 'paper' && bgMode !== 'transparent') { bgMode = 'paper'; bgSeg.refresh(); } });
     const chips = h('div.nd-preset-chips');
     PRESETS.forEach(([n, pw, ph]) => {
       const b = h('button.nd-chipbtn', { type: 'button', title: pw + ' × ' + ph }, n);
@@ -62,12 +110,13 @@
     const info = () => { const mp = (w.value * hh.value) / 1e6; inf.textContent = (+w.value) + ' × ' + (+hh.value) + ' px · ' + mp.toFixed(1) + ' MP · about ' + U.fmtBytes(w.value * hh.value * 4) + ' per layer' + (mp > 20 ? ' — large canvases are slower' : ''); };
     w.addEventListener('input', info); hh.addEventListener('input', info);
     info();
-    D.modal('New document', h('div', chips, field('Name', name), h('div.nd-row', field('Width', w, 'px'), field('Height', hh, 'px'), swapB), inf, h('div.nd-row', h('span.nd-lbl', 'Background'), bgSeg, bgCol)), [
+    D.modal('New document', h('div', chips, field('Name', name), h('div.nd-row', field('Width', w, 'px'), field('Height', hh, 'px'), swapB), inf, h('div.nd-row', h('span.nd-lbl', 'Background'), bgSeg, bgCol), h('div.nd-mini-title', 'Paper'), paperBox), [
       { label: 'Cancel' },
       { label: 'Create', primary: true, action: () => {
         const W = U.clamp(Math.round(+w.value || 1920), 1, 16384), H = U.clamp(Math.round(+hh.value || 1080), 1, 16384);
-        const bg = bgMode === 'white' ? '#ffffff' : bgMode === 'transparent' ? null : bgMode === 'bg' ? App.state.bg : bgCol.value;
-        App.newDocument(W, H, bg, name.value || 'Untitled');
+        const bg = bgMode === 'paper' ? pp.tint : bgMode === 'white' ? '#ffffff' : bgMode === 'transparent' ? null : bgMode === 'bg' ? App.state.bg : bgCol.value;
+        App.set('lastPaper', Object.assign({}, pp));
+        App.newDocument(W, H, bg, name.value || 'Untitled', pp.type === 'none' ? null : pp, bgMode === 'paper');
       } },
     ], { wide: true });
   };
@@ -181,13 +230,14 @@
       ['Q', 'Quick mask — paint a selection, Q again to finish'], ['\\', 'Switch between painting the layer and its mask'], ['Ctrl+R', 'Rulers (drag from a ruler to make a guide)'],
       ['Shift+Backspace', 'Content-aware fill of the selection'],
       ['[ ]', 'Brush size down / up (Shift: softness)'], ['Shift+drag', 'Resize the brush on the canvas'], ['Shift+click', 'Straight line from the last stroke'],
-      ['Ctrl/Alt+click', 'Pick colour while painting (sets clone source with the clone tool)'], ['Right-click', 'Pick colour'], ['Alt+wheel', 'Brush size'],
+      ['Ctrl/Alt+click', 'Pick colour while painting (sets clone source with the clone tool)'], ['Right-click / pen side button', 'Pop-up palette: favourite brushes, recent colours, colour wheel (Alt+right-click picks a colour)'], ['Alt+wheel', 'Brush size'],
       ['X · D', 'Swap colours · black & white'], ['1 · 2 · 3', 'Fit · 100% · 200%'], ['4 · 5 · 6', 'Rotate view left · reset · right'], ['M', 'Mirror view'],
       ['Space+drag', 'Pan from any tool (Shift+Space+drag rotates)'], ['Tab', 'Hide / show panels'], ['F11', 'Full screen'],
       ['Ctrl+Z · Ctrl+Shift+Z / Ctrl+Y', 'Undo · redo'], ['Ctrl+C · X · V', 'Copy · cut · paste (works with other apps)'], ['Ctrl+Shift+C', 'Copy merged'],
       ['Ctrl+A · Ctrl+D · Ctrl+Shift+I', 'Select all · deselect · invert'], ['Delete', 'Clear the selection'], ['Alt+Backspace · Ctrl+Backspace', 'Fill with FG · BG'],
       ['Ctrl+Shift+N · Ctrl+J · Ctrl+E', 'New layer · layer via copy · merge down'], ['Ctrl+G · Ctrl+Shift+G', 'Group · ungroup'], ['Ctrl+Alt+G', 'Clipping mask'],
-      ['Ctrl+T', 'Transform'], ['Ctrl+F', 'Repeat the last filter'], ['Ctrl+N · O · S', 'New · open · save project'], ['Ctrl+Shift+S', 'Export PNG'],
+      ['Ctrl+K', 'Command palette — type to run anything'], ['Ctrl+Alt+R', 'Select and Mask (refine edges, hair)'],
+      ['Ctrl+T', 'Transform'], ['Ctrl+F', 'Repeat the last filter'], ['Ctrl+N · O', 'New · open'], ['Ctrl+S · Ctrl+Alt+S', 'Save (back to the same file) · save as'], ['Ctrl+Shift+S', 'Export PNG'],
       ['Arrow keys', 'Nudge layer with the Move tool (Shift ×10)'], ['Enter · Esc', 'Apply · cancel transforms, crops, curves and text'],
       ['Two-finger tap', 'Undo (touch screens)'], ['Pinch', 'Zoom & pan'],
     ];

@@ -23,16 +23,23 @@
   <script src="../js/filters.js"></script>
   <script src="../js/selection.js"></script>
   <script src="../js/textures.js"></script>
+  <script src="../js/paper.js"></script>
+  <script src="../js/harmony.js"></script>
   <script src="../js/tips.js"></script>
   <script src="../js/patterns.js"></script>
+  <script src="../js/patterns2.js"></script>
   <script src="../js/stamps.js"></script>
   <script src="../js/heal.js"></script>
   <script src="../js/smartsel.js"></script>
+  <script src="../js/refine.js"></script>
+  <script src="../js/ai.js"></script>
   <script src="../js/engine.js"></script>
   <script src="../js/presets.js"></script>
   <script src="../js/storage.js"></script>
   <script src="../js/psd.js"></script>
   <script src="../js/render.js"></script>
+  <script src="../js/ui/controls.js"></script>
+  <script src="../js/ui/command.js"></script>
   <script>
   'use strict';
   (async function () {
@@ -341,6 +348,123 @@
       const d3 = await ND.Store.restore(saved);
       assert(d3.allLayers()[1].mask && near(px(d3.allLayers()[1].canvas, 5, 5), [0, 255, 0, 255]), 'restored with mask');
       const d4 = await ND.Store.restore(ND.Store.serialize(d)); assert(d4.allLayers().length === 2, 'old string autosaves still load');
+    });
+    await test('Select and Mask: shift edge, feather, contrast', () => {
+      const W = 100, H = 100, m = new Float32Array(W * H), px = new Uint8ClampedArray(W * H * 4).fill(128);
+      for (let y = 30; y < 70; y++) for (let x = 30; x < 70; x++) m[y * W + x] = 1;
+      const width = (a) => { let n = 0; for (let x = 0; x < W; x++) if (a[50 * W + x] >= 0.5) n++; return n; };
+      const grow = ND.Refine.run(px, m, W, H, { shift: 5 }).alpha, shrink = ND.Refine.run(px, m, W, H, { shift: -5 }).alpha;
+      assert(Math.abs(width(grow) - 50) <= 1 && Math.abs(width(shrink) - 30) <= 1, 'shift ' + width(grow) + ' / ' + width(shrink));
+      const f = ND.Refine.run(px, m, W, H, { feather: 10 }).alpha;
+      assert(f[50 * W + 50] > 0.99 && f[50 * W + 2] < 0.01 && f[50 * W + 30] > 0.3 && f[50 * W + 30] < 0.7, 'feather soft edge');
+      const c = ND.Refine.run(px, m, W, H, { feather: 10, contrast: 100 }).alpha;
+      assert(c[50 * W + 26] < 0.05 && c[50 * W + 34] > 0.95, 'contrast hardens');
+    });
+    await test('Select and Mask: edge radius finds hair, decontaminate removes the fringe', () => {
+      const W = 160, H = 120, cv = U.canvas(W, H), x = U.ctx(cv);
+      x.fillStyle = '#c03020'; x.fillRect(0, 0, W, H);
+      x.fillStyle = '#f2f2f2'; x.beginPath(); x.arc(80, 60, 30, 0, 7); x.fill();
+      x.strokeStyle = '#f2f2f2'; x.lineWidth = 1.5;
+      for (let a = 0; a < 6.28; a += 0.35) { x.beginPath(); x.moveTo(80 + Math.cos(a) * 28, 60 + Math.sin(a) * 28); x.lineTo(80 + Math.cos(a) * 44, 60 + Math.sin(a) * 44); x.stroke(); }
+      x.fillStyle = 'rgb(242,136,131)'; x.fillRect(4, 4, 6, 6); // a 50/50 mix of object and background
+      const px = x.getImageData(0, 0, W, H).data, m = new Float32Array(W * H);
+      for (let yy = 0; yy < H; yy++) for (let xx = 0; xx < W; xx++) { if (Math.hypot(xx - 80, yy - 60) < 31) m[yy * W + xx] = 1; if (xx >= 0 && xx < 14 && yy < 14 && (xx - 7) ** 2 + (yy - 7) ** 2 < 12) m[yy * W + xx] = 1; }
+      const before = m[60 * W + 80 + 38];
+      const res = ND.Refine.run(px, m, W, H, { radius: 16, decontam: true, amount: 1 });
+      // strand pixel along angle 0 at distance 38; background between strands at distance 38, angle 0.17
+      const strand = res.alpha[60 * W + 80 + 38], gapX = Math.round(80 + Math.cos(0.17) * 38), gapY = Math.round(60 + Math.sin(0.17) * 38);
+      assert(before === 0 && strand > 0.45, 'hair strand picked up ' + strand.toFixed(2));
+      assert(res.alpha[gapY * W + gapX] < 0.15, 'background between strands stays out ' + res.alpha[gapY * W + gapX].toFixed(2));
+      assert(res.alpha[60 * W + 80] > 0.98 && res.alpha[5 * W + 150] < 0.02, 'inside / outside kept');
+      const j = (60 * W + 80 + 38) * 4;
+      assert(res.colour[j + 1] > px[j + 1] + 20, 'decontaminated edge is less red: G ' + px[j + 1] + ' → ' + res.colour[j + 1]);
+    });
+    await test('Command palette matching', () => {
+      const sc = ND.Command._score, it = (label, cat) => ({ label, cat: cat || 'Filter' });
+      assert(sc(it('Gaussian Blur'), 'gaus') > sc(it('Gaussian Blur'), 'blur') && sc(it('Gaussian Blur'), 'blur') > sc(it('Gaussian Blur'), 'Filter'), 'prefix beats word beats category');
+      assert(sc(it('Select and Mask'), 'sel mask') > sc(it('Mask to selection', 'Layer'), 'sel mask'), 'word order ranks');
+      assert(sc(it('Gaussian Blur'), 'gblr') > 0 && sc(it('Gaussian Blur'), 'xyz') < 0, 'letters in order / no match');
+    });
+    await test('bristle brushes keep painting on long strokes', () => {
+      for (const name of ['Oil Bristle', 'Dry Bristle']) {
+        const d = new ND.Doc(2600, 120, null), p = ND.Presets.LIST.find((q) => q.name === name);
+        const st = new ND.Brush.Stroke(d, Object.assign({}, p.settings, { stabilizer: 0 }), { colour: '#000000' });
+        st.begin({ x: 20, y: 60, p: 0.7 }); for (let i = 1; i <= 640; i++) st.move({ x: 20 + i * 4, y: 60, p: 0.7 }); st.end('b');
+        const a = U.ctx(d.active.canvas).getImageData(2350, 30, 200, 60).data;
+        let n = 0; for (let i = 3; i < a.length; i += 4) if (a[i] > 30) n++;
+        assert(n > 600, name + ' still paints after 2.4k px (' + n + ' px)');
+      }
+    });
+    await test('paper texture breaks up dry media but not ink', () => {
+      const cover = (paper, preset) => {
+        const d = new ND.Doc(400, 120, null); d.paper = paper ? ND.Paper.make(paper) : null;
+        const p = ND.Presets.LIST.find((q) => q.name === preset);
+        const st = new ND.Brush.Stroke(d, Object.assign({}, p.settings, { size: 40, stabilizer: 0, pressureSize: false }), { colour: '#000000' });
+        st.begin({ x: 30, y: 60, p: 0.5 }); for (let i = 1; i <= 80; i++) st.move({ x: 30 + i * 4, y: 60, p: 0.5 }); st.end('t');
+        const a = U.ctx(d.active.canvas).getImageData(100, 50, 200, 20).data;
+        let sum = 0; for (let i = 3; i < a.length; i += 4) sum += a[i];
+        return sum / (a.length / 4) / 255;
+      };
+      const smooth = cover(null, 'Charcoal Stick'), rough = cover('rough', 'Charcoal Stick'), bristol = cover('bristol', 'Charcoal Stick');
+      assert(rough < smooth * 0.9 && rough < bristol, 'charcoal: smooth ' + smooth.toFixed(2) + ' bristol ' + bristol.toFixed(2) + ' rough ' + rough.toFixed(2));
+      const ink = cover(null, 'Technical Pen'), inkRough = cover('rough', 'Technical Pen');
+      assert(inkRough > ink * 0.75, 'ink barely changes: ' + ink.toFixed(2) + ' → ' + inkRough.toFixed(2));
+      assert(ND.Paper.autoResponse({ pattern: 'Leaves' }, 'pixel') === 0, 'pattern brushes ignore the paper');
+      return 'charcoal coverage ' + smooth.toFixed(2) + ' → ' + rough.toFixed(2) + ' on rough paper';
+    });
+    await test('paper renders its tint and round-trips in projects', async () => {
+      const pp = ND.Paper.make('kraft'), c = ND.Paper.render(pp, 300, 200), a = U.ctx(c).getImageData(0, 0, 300, 200).data;
+      let r = 0, g = 0, b = 0; for (let i = 0; i < a.length; i += 4) { r += a[i]; g += a[i + 1]; b += a[i + 2]; }
+      const n = a.length / 4, tint = U.hexToRgb(pp.tint);
+      assert(Math.abs(r / n - tint[0]) < 25 && Math.abs(b / n - tint[2]) < 25, 'average close to the tint');
+      const d = new ND.Doc(50, 40, '#fff'); d.paper = pp;
+      const d2 = await ND.Store.deserialize(ND.Store.serialize(d));
+      assert(d2.paper && d2.paper.type === 'kraft' && d2.paper.texture === 'paper', 'paper saved');
+    });
+    await test('colour harmonies', () => {
+      const H = ND.Harmony, hue = (q) => Math.round(q[0]);
+      assert(hue(H.harmony([240, 1, 1], 'complementary', 30, true)[1]) === 30, 'painter’s wheel: blue ↔ orange');
+      assert(hue(H.harmony([240, 1, 1], 'complementary', 30, false)[1]) === 60, 'screen wheel: blue ↔ yellow');
+      assert(H.harmony([0, 1, 1], 'triadic', 30, false).map(hue).join() === '0,120,240', 'triadic');
+      assert(H.harmony([10, 0.8, 0.8], 'analogous', 20, false).length === 5 && H.harmony([10, 0.8, 0.8], 'square', 0, true).length === 4, 'counts');
+      for (let a = 0; a < 360; a += 15) assert(Math.abs(H.hueToRyb(H.rybToHue(a)) - a) < 0.01, 'RYB mapping round-trips');
+    });
+    await test('panels never rebuild under a slider being dragged', () => {
+      const box = document.createElement('div'); document.body.appendChild(box);
+      let v = 0.5, rebuilt = 0;
+      const sl = ND.C.slider('T', { min: 0, max: 1, step: 0.01, get: () => v, set: (x) => { v = x; } });
+      box.appendChild(sl);
+      const rebuild = () => { rebuilt++; };
+      ND.C.hold(sl);
+      assert(ND.C.whenFree(box, rebuild) === false && rebuilt === 0, 'deferred while held');
+      ND.C.release();
+      assert(rebuilt === 1, 'ran on release');
+      assert(ND.C.whenFree(box, rebuild) === true && rebuilt === 2, 'runs at once when idle');
+      box.remove();
+    });
+    await test('AI models: registry, licences and availability rules', () => {
+      const M = ND.AI.MODELS;
+      assert(ND.AI.ORDER.join() === 'isnet,modnet,rmbg', 'three models');
+      ND.AI.ORDER.forEach((id) => assert(/^https:\/\/huggingface\.co\//.test(M[id].url) && M[id].size > 1e7, id + ' url/size'));
+      assert(M.isnet.commercial && M.modnet.commercial && !M.rmbg.commercial, 'RMBG is marked non-commercial');
+      const was = window.ND_SINGLE_FILE; window.ND_SINGLE_FILE = true;
+      assert(/single-file/.test(ND.AI.unsupported()), 'single-file build explains why AI is off');
+      window.ND_SINGLE_FILE = was;
+    });
+    await test('AI quick select picks whole objects under the stroke', () => {
+      const w = 60, h = 40, alpha = new Float32Array(w * h);
+      for (let y = 5; y < 35; y++) for (let x = 5; x < 25; x++) alpha[y * w + x] = 1; // object A
+      for (let y = 10; y < 30; y++) for (let x = 35; x < 55; x++) alpha[y * w + x] = 0.9; // object B
+      for (let y = 5; y < 35; y++) alpha[y * w + 25] = 0.3; // soft edge of A
+      const R = ND.AI.regions({ alpha, w, h });
+      assert(R.count === 2, 'two objects found (' + R.count + ')');
+      const stroke = U.canvas(120, 80); U.ctx(stroke).fillStyle = '#fff'; U.ctx(stroke).fillRect(80, 30, 12, 6); // over B (doc is 2× the AI size)
+      const hit = ND.AI.regionsUnder(R, stroke);
+      assert(hit.size === 1, 'stroke hits one object');
+      const m = ND.AI.regionMask(R, hit, 120, 80);
+      assert(px(m, 90, 40)[3] > 200 && px(m, 30, 40)[3] < 10, 'only the stroked object is selected');
+      const both = ND.AI.regionMask(R, new Set([0, 1]), 120, 80);
+      assert(px(both, 51, 40)[3] > 20, 'soft edge pixels belong to their object');
     });
     document.getElementById('sum').innerHTML = '<span class="' + (fail ? 'fail' : 'pass') + '">' + pass + ' passed, ' + fail + ' failed</span>';
   })();

@@ -1,5 +1,93 @@
 # Changelog
 
+## 2.5 — AI background removal and AI masking
+
+### AI models (Help ▸ AI models)
+- Download and manage three background-removal models. Each is downloaded once from Hugging Face, stored in your browser, and then works offline. Images are processed on your own computer and never uploaded.
+  - **ISNet** (general objects, 179 MB): products, animals, objects and people. Apache 2.0, so free for commercial use.
+  - **MODNet** (people & portraits, 26 MB): smallest and fastest. Apache 2.0, so free for commercial use.
+  - **RMBG-1.4** (highest quality, 176 MB): usually the cleanest edges. **Non-commercial use only** under BRIA's licence, and the app says so wherever you pick it.
+- Uses your graphics card through WebGPU where available (about a second per picture). Otherwise it runs on the CPU (2–40 s), in the background so the app never freezes. If a graphics driver returns a blank result, it automatically switches to the CPU.
+- Downloads show progress, can be cancelled, and resume automatically if the connection drops.
+
+### Using the AI
+- **Layer ▸ Remove background with AI…** asks which model to use (with an option to stop asking), downloads it if needed, and hides the background with a layer mask. By default it also **refines and cleans the edges**: the edge is re-judged from colour so leftover background pixels drop out, and the old background's colour fringe is removed from hair and edges.
+- **AI masks** on any layer, group or adjustment layer: **Layer ▸ AI mask: hide the background…** and **…hide the subject…**. For example, add a Curves layer and give it a subject mask to brighten only the person.
+- **Select ▸ Select subject with AI…** and **Select background with AI…**.
+- **Quick select tool ▸ AI objects**: each stroke selects the whole object the AI finds under it. Alt+stroke removes an object.
+- **Select and Mask ▸ AI subject…** starts the workspace from an AI selection, ready for hair refinement.
+- **Layer ▸ Refine & clean edges** works on any layer that has a mask.
+- The quick non-AI Remove background and Select subject are still there, named "quick, no AI".
+
+### Under the hood
+- Bundles ONNX Runtime Web 1.30 (MIT licence) in `vendor/ort-1.30.0/`, so the AI engine doesn't depend on outside servers. It is cached together with the models for offline use.
+
+## 2.4 — paper, colour harmony, more brushes, fixes
+
+### Fixed
+- **Sliders stopping mid-drag.** Dragging a layer's opacity slider, or a slider on an adjustment layer, recorded an undo step, which made the panel rebuild itself and delete the slider you were holding. Panels now wait until you let go before refreshing, so every slider drags smoothly from start to finish.
+- **Oil Bristle and Dry Bristle stopped painting** after a short distance because each bristle ran completely out of paint. Bristles now thin out to a streaky dry-brush level but never stop. Long segments are drawn in small pieces, so dry-brush breaks look natural instead of blocky. Bristle brushes have a new **Dryness** setting.
+
+### Paper and canvas
+- **Choose a paper when you create a document**, or later with Image ▸ Paper & texture….
+  - 17 surfaces: smooth Bristol, cartridge, sketchbook, newsprint, hot-press, cold-press and rough watercolour, laid charcoal paper, toned pastel paper, sanded pastel card, kraft, toned grey, black card, primed canvas, linen and gessoed board.
+  - 16 paper tints, or pick your own colour.
+  - **Roughness**, **Texture visible** and **Grain size** sliders.
+- **The paper changes how each kind of brush behaves:**
+  - Pencils, charcoal, pastels and crayons catch only the tooth of the paper, more so on rough paper and at light pressure.
+  - Watercolour granulates into the paper's valleys, spreads and feathers further on absorbent paper, and keeps crisper edges on hard-sized paper.
+  - Oil and acrylic bristles skip the valleys of the canvas weave.
+  - Inks, airbrush and pattern or scatter brushes barely notice it.
+  - Each brush has a **Paper response** setting (automatic by default) if you want more or less.
+- **Erasing on the paper layer brings back the paper texture**, not a flat colour.
+- The paper is saved in .ndraw projects.
+
+### Colour harmony wheel
+- New **Harmony** tab in the Colour panel.
+  - Schemes: complementary, analogous, triadic, split complementary, rectangle, square, monochromatic, and shades & tints.
+  - Drag any marker to rotate the whole scheme. Adjust **Spread** and **Value**.
+  - Click a swatch to paint with it (Alt+click sets the background colour). **Save as palette** keeps the scheme.
+- **Painter's wheel (RYB)** option, on by default: complements match paint mixing (blue ↔ orange, red ↔ green, yellow ↔ violet) instead of the screen's RGB wheel.
+
+### More brushes and patterns
+- **78 new brush presets (190 in total):**
+  - Pencils: mechanical, 2H, 4B, graphite stick, graphite powder, blue sketch.
+  - Pens: ballpoint, gel pen, fountain pen, dip pen, Sumi brush, stippling pen, comic inker.
+  - Bristle and paint: round, hog, filbert, fan blender, acrylic flat, oil blender, glazing and gouache flat.
+  - Watercolour: wet-in-wet, dry-brush watercolour, sable round, flat wash, splash wash.
+  - Dry media: pastel side, pastel pencil, vine and compressed charcoal, sanguine, wax pencil, crayon scribble.
+  - Airbrush: XL soft, grainy and hard airbrushes.
+  - Texture: foliage, pine needles, rock, stipple shader, linen.
+  - Pattern and scatter brushes, plus new FX glazes.
+- **6 new brush tips:** filbert, fan, pastel side, stipple, scratchy vine charcoal, pine needles.
+- **24 new scatter sprites:** rose petals, wildflowers, lavender, tulips, reeds, pine trees, tree canopy, seaweed, coral, raindrops, fireflies, glitter, galaxy stars, hatch marks, cross marks, hair strands, stitches, chain, rope, footprints, ink blots, candy, balloons and leaf litter.
+- **23 new seamless patterns:** quatrefoil, trellis, seigaiha waves, scallops, houndstooth, hexagons, dotted grid, fishnet, rain, small leaves, knit, tumbling blocks, parquet, wood planks, terrazzo, marble, bathroom tiles, burlap, bamboo, carbon fibre, blue plaid, confetti dots and sand ripples.
+
+## 2.3 — pop-up palette, Select and Mask, save in place, command palette
+
+### New
+- **Pop-up palette:** right-click the canvas (or press the pen's side button) for a ring of favourite brushes, your recent colours and a colour wheel right under the cursor.
+  - Star (☆) any preset in the Brushes panel to add it. Right-click a slot to remove it, or click an empty slot to add the current brush. It holds up to 12.
+  - Alt+right-click still picks a colour. View ▸ *Right-click opens the pop-up palette* switches back to the old behaviour.
+- **Select and Mask (Select ▸ Select and Mask…, Ctrl+Alt+R, or the Quick select tool's button):** a full-screen workspace with a live preview.
+  - **Edge detection radius** re-analyses the edge to pick up hair and fur. **Smooth**, **Feather**, **Contrast** and **Shift edge** refine the outline.
+  - **Decontaminate colours** removes the background colour fringe from edge pixels.
+  - Views: overlay, on black, on white, transparent, black & white (F cycles them). Click the picture for 100%, drag to look around.
+  - Output to a selection, a layer mask, a new cut-out layer, or a new layer with a mask. With no selection it starts from Select subject.
+- **Save in place (Chrome, Edge and the installed app):** Ctrl+S writes back to the same .ndraw file; the first save asks where.
+  - **Save as** (Ctrl+Alt+S) picks a new file; *Download a copy* keeps the old download behaviour.
+  - A ● in the title shows unsaved changes.
+  - Files opened from File ▸ Open, drag and drop, or *Open with* remember their location, even after a restart (via autosave).
+  - Other browsers download the file as before.
+- **Open recent** in the File menu, up to 8 files. The browser may ask once for permission after a restart.
+- **Command palette (Ctrl+K):** type to run any menu command, tool, brush, filter, adjustment, or jump to a layer.
+  - Matches word starts and letters in order (e.g. "gblr" finds Gaussian Blur).
+  - Shows your recent commands first.
+
+### For developers
+- **GitHub Actions** (`.github/workflows/deploy.yml`): lint and all self tests in headless Chrome on every push and pull request, then publish to GitHub Pages from main with a fresh offline-cache name each time. See DEPLOY.md.
+- `npm test` runs the self tests headless (`tools/run-tests.mjs`). `tools/build-pwa.py --stamp` adds a build id to the cache name.
+
 ## 2.2 — install, PSD import, smart selection, speed
 
 ### Fixes you asked for

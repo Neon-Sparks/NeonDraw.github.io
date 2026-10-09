@@ -4,6 +4,26 @@
   const U = ND.U, h = U.h;
   const C = {};
 
+  /* While a slider is being dragged, panels must not rebuild themselves (that would delete the
+   * slider under the pointer and end the drag). Rebuilds requested meanwhile run on release. */
+  C.held = null;
+  const deferred = [];
+  C.hold = (el) => { C.held = el; };
+  C.release = function () {
+    if (!C.held) return;
+    C.held = null;
+    deferred.splice(0).forEach((f) => { try { f(); } catch (e) { console.error(e); } });
+  };
+  window.addEventListener('pointerup', () => setTimeout(C.release, 0), true);
+  window.addEventListener('pointercancel', () => setTimeout(C.release, 0), true);
+  window.addEventListener('blur', () => C.release());
+  // run fn now, or after the drag if a held control lives inside container
+  C.whenFree = function (container, fn) {
+    if (C.held && container && container.contains(C.held)) { if (!deferred.includes(fn)) deferred.push(fn); return false; }
+    fn();
+    return true;
+  };
+
   /* slider with an editable number. o: {min,max,step,get,set,fmt,unit,log,title,wide} */
   C.slider = function (label, o) {
     const toPos = (v) => (o.log ? (Math.log(v) - Math.log(o.min)) / (Math.log(o.max) - Math.log(o.min)) * 1000 : v);
@@ -13,19 +33,20 @@
     const fmt = o.fmt || ((v) => String(Math.round(v * 100) / 100));
     const el = h('label.nd-slider' + (o.wide ? '.wide' : ''), { title: o.title || '' }, h('span.nd-lbl', label), range, num, o.unit ? h('span.nd-unit', o.unit) : null);
     const set = (v) => { v = U.clamp(v, o.min, o.max); if (o.step && !o.log) v = Math.round(v / o.step) * o.step; o.set(v); };
+    range.addEventListener('pointerdown', () => C.hold(el));
     range.addEventListener('input', () => { const v = fromPos(range.value); set(o.log ? (v < 10 ? Math.round(v * 10) / 10 : Math.round(v)) : v); num.value = fmt(o.get()); });
     num.addEventListener('change', () => { const v = parseFloat(num.value); if (!isNaN(v)) set(o.toValue ? o.toValue(v) : v); el.refresh(); });
     num.addEventListener('keydown', (e) => { if (e.key === 'Enter') num.blur(); e.stopPropagation(); });
     // drag on the number to scrub
     let sx = null, sv = 0;
-    num.addEventListener('pointerdown', (e) => { if (document.activeElement === num) return; sx = e.clientX; sv = o.get(); num.setPointerCapture(e.pointerId); });
+    num.addEventListener('pointerdown', (e) => { if (document.activeElement === num) return; sx = e.clientX; sv = o.get(); C.hold(el); try { num.setPointerCapture(e.pointerId); } catch (err) { /* synthetic */ } });
     num.addEventListener('pointermove', (e) => {
       if (sx === null) return;
       const dx = e.clientX - sx;
       if (Math.abs(dx) > 2) { e.preventDefault(); const span = o.max - o.min; set(o.log ? sv * Math.pow(1.01, dx) : sv + (dx / 200) * span); el.refresh(); num.dataset.dragged = '1'; }
     });
     num.addEventListener('pointerup', () => { if (sx !== null && !num.dataset.dragged) num.focus(), num.select(); sx = null; delete num.dataset.dragged; });
-    el.refresh = () => { const v = o.get(); if (document.activeElement !== range) range.value = toPos(v); if (document.activeElement !== num) num.value = fmt(v); };
+    el.refresh = () => { const v = o.get(); if (document.activeElement !== range && C.held !== el) range.value = toPos(v); if (document.activeElement !== num) num.value = fmt(v); };
     el.refresh();
     return el;
   };

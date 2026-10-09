@@ -148,7 +148,9 @@
       add(C.segmented([['add', 'Add'], ['subtract', 'Subtract']], () => (S().selMode === 'subtract' ? 'subtract' : 'add'), (v) => App.set('selMode', v)));
       add(stateSlider('Size', 'smartSize', 4, 400, { log: true, unit: 'px', fmt: (v) => Math.round(v) }));
       add(stateCheck('Sample all layers', 'wandMerged'));
-      add(C.button('Select subject', () => App.selectSubject(), { icon: 'smartsel', title: 'Find the main object automatically' }), C.button('Remove background', () => App.removeBackground(), { icon: 'removebg', title: 'Hide the background of the active layer with a mask' }));
+      add(stateCheck('AI objects', 'smartAI', 'Each stroke selects the whole object the AI finds under it (uses a downloaded AI model)'));
+      add(C.button('AI subject', () => App.aiSelect(false), { icon: 'smartsel', title: 'Select the main subject with an AI model' }));
+      add(C.button('Select subject', () => App.selectSubject(), { icon: 'smartsel', title: 'Find the main object automatically (quick, no AI)' }), C.button('Remove background with AI…', () => App.aiRemoveBackground(), { icon: 'removebg', title: 'Hide the background of the active layer with an AI mask' }), C.button('Select and Mask…', () => ND.SelectMask.open(), { title: 'Refine the edge — hair, fur, soft edges (Ctrl+Alt+R)' }));
       add(C.hint('Paint over the object — the selection snaps to its edges · Alt+paint removes'));
     } else if (App.SELECT_TOOLS.includes(tool)) {
       add(C.segmented([['replace', 'Replace'], ['add', 'Add'], ['subtract', 'Subtract'], ['intersect', 'Intersect']], () => S().selMode, (v) => App.set('selMode', v)));

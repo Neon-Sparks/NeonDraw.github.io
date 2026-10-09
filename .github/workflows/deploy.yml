@@ -1,0 +1,63 @@
+# Checks every push and pull request (lint + self tests in headless Chrome), then publishes the
+# site to GitHub Pages from main. Needs Settings ▸ Pages ▸ Source: "GitHub Actions" (see DEPLOY.md).
+name: Check and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install lint and test tools
+        run: npm install --no-audit --no-fund
+      - name: Lint
+        run: npm run lint
+      - name: Install headless Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Self tests
+        run: npm test
+
+  deploy:
+    needs: check
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      # a new cache name on every deploy, so installed copies always get the "Update ready" button
+      - name: Refresh the offline file list
+        run: python tools/build-pwa.py --stamp "${GITHUB_SHA::7}"
+      - name: Build the single-file version
+        run: python tools/build-single.py
+      - name: Collect the site
+        run: |
+          mkdir _site
+          cp -r index.html manifest.webmanifest sw.js .nojekyll css js icons vendor dist _site/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

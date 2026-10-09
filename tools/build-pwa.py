@@ -5,7 +5,9 @@ Run this after changing any app files, then upload. Users get an "Update ready" 
 the next time they open the app.
 
     python tools/build-pwa.py
+    python tools/build-pwa.py --stamp abc1234   (adds a build id, e.g. the git commit — used by the GitHub workflow)
 """
+import argparse
 import json
 import os
 
@@ -15,8 +17,13 @@ INCLUDE_FILES = ['index.html', 'manifest.webmanifest']
 
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--stamp', default='', help='extra build id appended to the cache name')
+    args = ap.parse_args()
     with open(os.path.join(ROOT, 'package.json'), encoding='utf-8') as f:
         version = json.load(f)['version']
+    if args.stamp:
+        version += '-' + args.stamp
     files = ['./'] + ['./' + f for f in INCLUDE_FILES]
     for d in INCLUDE_DIRS:
         for base, _dirs, names in os.walk(os.path.join(ROOT, d)):

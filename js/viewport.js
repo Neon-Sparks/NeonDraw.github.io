@@ -744,6 +744,8 @@
     cv.style.cursor = spaceDown ? 'grab' : t === 'pan' ? 'grab' : t === 'zoom' ? 'zoom-in' : t === 'move' ? 'move' : t === 'eyedropper' ? 'copy' : t === 'text' ? 'text' : App.isBrushTool(t) ? 'none' : 'crosshair';
   }
 
+  // hand a pointer over to an overlay (e.g. the pop-up palette) opened on pointerdown
+  function endPointer(e) { pointers.delete(e.pointerId); try { cv.releasePointerCapture(e.pointerId); } catch (err) { /* not captured */ } }
   function onDown(e) {
     const d = App.doc;
     if (!d) return;
@@ -773,7 +775,7 @@
       cv.style.cursor = 'grabbing';
       return;
     }
-    if (e.button === 2) { pickColour(p, false); return; }
+    if (e.button === 2) { if (st.rightClick === 'pick' || e.altKey || e.ctrlKey) pickColour(p, false); else { endPointer(e); ND.Popup.open(e.clientX, e.clientY); } return; }
     if (e.button !== 0 && e.pointerType !== 'pen') return;
     if (ND.Tools2.down(e, p, l)) return;
     if (tool === 'zoom') { V.drag = { tool: 'zoom', sx: l.sx, sy: l.sy, z0: st.view.zoom, alt: e.altKey, moved: false }; return; }

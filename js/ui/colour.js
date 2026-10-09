@@ -16,6 +16,8 @@
     'Sky & Sea': ['#03045e', '#023e8a', '#0077b6', '#0096c7', '#00b4d8', '#48cae4', '#90e0ef', '#ade8f4', '#caf0f8', '#ffffff', '#f8c291', '#e58e73', '#b8505b', '#6a2c70'],
   };
 
+  const { harmony, rybToHue, hueToRyb, RULES } = ND.Harmony;
+
   ND.ColourPanel = { build };
   App.palette = App.palette || 'Default';
   App.userPalettes = App.userPalettes || {};
@@ -28,7 +30,7 @@
     let internal = false;
     const setFromHsv = () => { internal = true; App.setColour(U.rgbToHex(...U.hsvToRgb(hsv[0], hsv[1], hsv[2]))); internal = false; };
 
-    const modeSeg = C.segmented([['square', 'Square'], ['wheel', 'Wheel'], ['sliders', 'Sliders']], () => mode, (v) => { mode = v; App.state.colourMode = v; renderPicker(); });
+    const modeSeg = C.segmented([['square', 'Square'], ['wheel', 'Wheel'], ['harmony', 'Harmony', 'Colour harmony wheel — complementary, triadic, analogous…'], ['sliders', 'Sliders']], () => mode, (v) => { mode = v; App.state.colourMode = v; renderPicker(); });
     const pickerBox = h('div.nd-picker');
     const fgSw = h('div.nd-big-sw.fg', { title: 'Foreground' }), bgSw = h('div.nd-big-sw.bg', { title: 'Background — click to swap' });
     bgSw.addEventListener('click', () => App.swapColours());
@@ -54,7 +56,7 @@
     function renderPicker() {
       U.clear(pickerBox);
       modeSeg.refresh();
-      if (mode === 'square') squarePicker(); else if (mode === 'wheel') wheelPicker(); else sliderPicker();
+      if (mode === 'square') squarePicker(); else if (mode === 'wheel') wheelPicker(); else if (mode === 'harmony') harmonyPicker(); else sliderPicker();
       draw();
     }
     function dragOn(el, fn) {
@@ -105,6 +107,93 @@
         const a = (hsv[0] * Math.PI) / 180;
         ring(x, R + Math.cos(a) * (inner + 9), R + Math.sin(a) * (inner + 9));
         ring(x, off + hsv[1] * side, off + (1 - hsv[2]) * side);
+      };
+    }
+    /* Harmony wheel: hue around, saturation outwards, value below. The base colour is the
+     * foreground; the scheme's other colours are shown as markers and as swatches to paint with. */
+    function harmonyPicker() {
+      const st = App.state.harmony || (App.state.harmony = { rule: 'complementary', spread: 30, ryb: true });
+      const S = 220, R = S / 2 - 6, c = h('canvas.nd-wheel.nd-harm', { width: S, height: S });
+      const val = h('input.nd-harm-v', { type: 'range', min: 0, max: 100, step: 1, title: 'Brightness (value)' });
+      const rule = C.select('Scheme', RULES, () => st.rule, (v) => { st.rule = v; App.savePrefsSoon(); renderSpread(); draw(); });
+      const spreadBox = h('div.nd-harm-row');
+      const sw = h('div.nd-harm-sw');
+      const rybChk = C.check('Painter’s wheel (RYB)', () => st.ryb, (v) => { st.ryb = v; disc = null; App.savePrefsSoon(); draw(); }, 'Arrange hues like a painter’s colour wheel, so complements match paint (blue ↔ orange). Off: the screen (RGB) wheel.');
+      const save = C.button('Save as palette', () => {
+        const cols = harmony(hsv, st.rule, st.spread, st.ryb).map((q) => U.rgbToHex(...U.hsvToRgb(q[0], q[1], q[2])));
+        const name = 'Harmony – ' + RULES.find((r) => r[0] === st.rule)[1] + ' ' + cols[0];
+        App.userPalettes[name] = cols; App.palette = name; renderPalette(); App.savePrefsSoon();
+        App.toast('Saved “' + name + '” to your palettes');
+      }, { cls: 'sm', icon: 'palette' });
+      pickerBox.append(c, h('div.nd-row.tight.nd-harm-row', h('span.nd-lbl', 'Value'), val), h('div.nd-row.tight.nd-harm-row', rule), spreadBox, sw, h('div.nd-row.tight.nd-harm-row', rybChk, save));
+      function renderSpread() {
+        U.clear(spreadBox);
+        if (['analogous', 'split', 'tetradic'].includes(st.rule)) {
+          spreadBox.appendChild(C.slider('Spread', { min: 5, max: 90, get: () => st.spread, set: (v) => { st.spread = v; App.savePrefsSoon(); draw(); }, unit: '°', wide: true, title: 'Angle between the colours of the scheme' }));
+        }
+      }
+      renderSpread();
+      // the disc for the current value (cached)
+      let disc = null, discKey = '';
+      const toWheel = (hh) => (st.ryb ? hueToRyb(hh) : hh), fromWheel = (a) => (st.ryb ? rybToHue(a) : a);
+      function buildDisc() {
+        const key = Math.round(hsv[2] * 100) + (st.ryb ? 'r' : 'g');
+        if (disc && discKey === key) return disc;
+        discKey = key;
+        disc = U.canvas(S, S);
+        const x = U.ctx(disc), id = x.createImageData(S, S);
+        for (let y = 0; y < S; y++) for (let xx = 0; xx < S; xx++) {
+          const dx = xx - S / 2, dy = y - S / 2, d = Math.hypot(dx, dy);
+          if (d > R + 1) continue;
+          const a = ((Math.atan2(dy, dx) * 180) / Math.PI + 90 + 360) % 360;
+          const [r, g, b] = U.hsvToRgb(fromWheel(a), Math.min(1, d / R), hsv[2]), j = (y * S + xx) * 4;
+          id.data[j] = r; id.data[j + 1] = g; id.data[j + 2] = b; id.data[j + 3] = 255 * U.clamp(R + 1 - d, 0, 1);
+        }
+        x.putImageData(id, 0, 0);
+        return disc;
+      }
+      const pos = (q) => { const a = ((toWheel(q[0]) - 90) * Math.PI) / 180; return [S / 2 + Math.cos(a) * q[1] * R, S / 2 + Math.sin(a) * q[1] * R]; };
+      let grab = 0, grabOff = 0;
+      dragOn(c, (e) => {
+        const r = c.getBoundingClientRect(), x = ((e.clientX - r.left) / r.width) * S - S / 2, y = ((e.clientY - r.top) / r.height) * S - S / 2;
+        const a = ((Math.atan2(y, x) * 180) / Math.PI + 90 + 360) % 360, sat = Math.min(1, Math.hypot(x, y) / R);
+        const cols = harmony(hsv, st.rule, st.spread, st.ryb);
+        if (e.type === 'pointerdown') {
+          // grab the nearest marker; dragging any of them turns the whole scheme
+          grab = 0; grabOff = 0;
+          let best = 14;
+          cols.forEach((q, i) => { const [px, py] = pos(q), dd = Math.hypot(px - S / 2 - x, py - S / 2 - y); if (dd < best) { best = dd; grab = i; } });
+          grabOff = toWheel(cols[grab][0]) - toWheel(hsv[0]);
+        }
+        hsv[0] = ((fromWheel(((a - grabOff) % 360 + 360) % 360)) + 360) % 360;
+        if (!['mono', 'shades'].includes(st.rule) || grab === 0) hsv[1] = sat;
+        setFromHsv(); draw();
+      });
+      val.addEventListener('input', () => { hsv[2] = val.value / 100; setFromHsv(); draw(); });
+      val.addEventListener('change', () => App.pushRecent(App.state.fg));
+      draw = () => {
+        const x = c.getContext('2d');
+        x.clearRect(0, 0, S, S); x.drawImage(buildDisc(), 0, 0);
+        const cols = harmony(hsv, st.rule, st.spread, st.ryb);
+        // spokes from the centre to each colour
+        x.strokeStyle = 'rgba(255,255,255,.55)'; x.lineWidth = 1.2;
+        cols.forEach((q) => { const [px, py] = pos(q); x.beginPath(); x.moveTo(S / 2, S / 2); x.lineTo(px, py); x.stroke(); });
+        cols.forEach((q, i) => {
+          const [px, py] = pos(q), rr = i === 0 ? 8 : 6;
+          x.beginPath(); x.arc(px, py, rr, 0, U.TAU);
+          x.fillStyle = 'rgb(' + U.hsvToRgb(q[0], q[1], q[2]).join(',') + ')'; x.fill();
+          x.lineWidth = i === 0 ? 3 : 2; x.strokeStyle = '#fff'; x.stroke();
+          x.lineWidth = 1; x.strokeStyle = 'rgba(0,0,0,.6)'; x.beginPath(); x.arc(px, py, rr + 1.5, 0, U.TAU); x.stroke();
+        });
+        if (document.activeElement !== val) val.value = Math.round(hsv[2] * 100);
+        val.style.background = 'linear-gradient(90deg,#000,rgb(' + U.hsvToRgb(hsv[0], hsv[1], 1).join(',') + '))';
+        U.clear(sw);
+        cols.forEach((q, i) => {
+          const hex = U.rgbToHex(...U.hsvToRgb(q[0], q[1], q[2]));
+          const b = h('button.nd-harm-swatch' + (hex === App.state.fg ? '.active' : '') + (i === 0 ? '.base' : ''), { type: 'button', title: hex + (i === 0 ? ' (base)' : '') + ' — click to paint with it · Alt+click: background', style: { background: hex } });
+          b.addEventListener('click', (e) => { internal = true; App.setColour(hex, e.altKey ? 'bg' : 'fg'); internal = false; App.pushRecent(hex); draw(); });
+          sw.appendChild(b);
+        });
       };
     }
     function sliderPicker() {

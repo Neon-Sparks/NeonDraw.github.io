@@ -270,7 +270,8 @@
     if (tool === 'smartsel') {
       const subtract = e.altKey || st.selMode === 'subtract';
       if (!T.smart || T.smart.doc !== d || T.smart.merged !== st.wandMerged) {
-        T.smart = { doc: d, merged: st.wandMerged, s: new ND.Smart.Session(d.sampleCanvas(st.wandMerged)) };
+        const src = d.sampleCanvas(st.wandMerged);
+        T.smart = { doc: d, merged: st.wandMerged, src: U.clone(src), s: new ND.Smart.Session(src) };
         if (d.selectionMask && st.selMode === 'add') { /* start fresh: seeds come from strokes */ }
       }
       const sz = st.smartSize;
@@ -392,6 +393,11 @@
     d.discardStroke();
     v.stroke = null; v.smarting = null;
     if (!hint || !T.smart) return;
+    if (App.state.smartAI) {
+      // AI objects: the stroke picks whole objects the AI model found
+      App.aiQuickSelect(mark, sub, T.smart).then((m) => { if (m || T.smart.ai) d.changeSelection('Quick Select (AI)', m); }).catch((e) => App.toast('AI failed: ' + e.message, 4000));
+      return;
+    }
     const t0 = performance.now(), mask = T.smart.s.add(mark, sub);
     if (!mask) { App.toast('Paint over the object you want first'); return; }
     T.smartBusy = performance.now() - t0;
