@@ -1,4 +1,4 @@
-// ESLint config for Neon Draw (classic browser scripts sharing the global ND namespace).
+// ESLint config for Neon Sparks Draw (classic browser scripts sharing the global ND namespace).
 // Run:  npx eslint js
 const globals = require('globals');
 

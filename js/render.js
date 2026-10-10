@@ -1,4 +1,4 @@
-/* Neon Draw — drawing helpers used by tools: gradients, shapes, text, mesh warping, curves. */
+/* Neon Sparks Draw — drawing helpers used by tools: gradients, shapes, text, mesh warping, curves. */
 'use strict';
 (function () {
   const U = ND.U;

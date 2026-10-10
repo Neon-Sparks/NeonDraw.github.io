@@ -1,4 +1,4 @@
-/* Neon Draw — selection helpers (masks are white canvases; alpha = selected amount). */
+/* Neon Sparks Draw — selection helpers (masks are white canvases; alpha = selected amount). */
 'use strict';
 (function () {
   const U = ND.U;

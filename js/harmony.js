@@ -1,4 +1,4 @@
-/* Neon Draw — colour harmony maths (used by the Harmony wheel in the colour panel). */
+/* Neon Sparks Draw — colour harmony maths (used by the Harmony wheel in the colour panel). */
 'use strict';
 (function () {
   /* ---------- colour harmony maths ---------- */

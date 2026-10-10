@@ -1,4 +1,4 @@
-/* Neon Draw — paper / grain textures (tileable 256×256 height maps, 0..1).
+/* Neon Sparks Draw — paper / grain textures (tileable 256×256 height maps, 0..1).
  * A textured brush deposits paint where the paper "height" exceeds a threshold
  * that falls as pressure rises, so light strokes only catch the tooth of the paper. */
 'use strict';

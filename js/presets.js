@@ -1,4 +1,4 @@
-/* Neon Draw — built-in brush presets, grouped by category. */
+/* Neon Sparks Draw — built-in brush presets, grouped by category. */
 'use strict';
 (function () {
   const P = (name, cat, settings) => ({ name, cat, builtin: true, settings });

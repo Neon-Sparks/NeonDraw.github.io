@@ -1,4 +1,4 @@
-/* Neon Draw — filter worker: runs the same filter code as the page, off the main thread, so big pictures
+/* Neon Sparks Draw — filter worker: runs the same filter code as the page, off the main thread, so big pictures
  * don't freeze the app while a filter is previewed or applied. Uses OffscreenCanvas instead of <canvas>.
  * Messages: init {scripts}, source {key, image}, run {fid, key | image, params, env}. */
 /* global importScripts */

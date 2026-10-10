@@ -1,4 +1,4 @@
-/* Neon Draw — colour management: ICC profiles, print (CMYK) proofing, gamut warning and conversions.
+/* Neon Sparks Draw — colour management: ICC profiles, print (CMYK) proofing, gamut warning and conversions.
  * Reads ICC v2 / v4 profiles: matrix + curve RGB profiles (Adobe RGB, ProPhoto, Display P3…) and LUT-based
  * CMYK printer profiles (lut8 / lut16 / lutAtoB / lutBtoA). Without a loaded printer profile a built-in
  * approximation of a coated offset press is used. The working colour space is sRGB, 8 bits per channel. */
@@ -218,7 +218,7 @@
     const B = () => new ND.Formats.Buf(false);
     const s15 = (b, v) => b.i32(Math.round(v * 65536));
     const xyzTag = (v) => { const b = B(); b.str('XYZ '); b.u32(0); v.forEach((q) => s15(b, q)); return b.bytes(); };
-    const desc = (() => { const t = 'sRGB IEC61966-2.1 (Neon Draw)', b = B(); b.str('desc'); b.u32(0); b.u32(t.length + 1); b.str(t); b.u8(0); b.u32(0); b.u32(0); b.u16(0); b.u8(0); for (let i = 0; i < 67; i++) b.u8(0); return b.bytes(); })();
+    const desc = (() => { const t = 'sRGB IEC61966-2.1 (Neon Sparks Draw)', b = B(); b.str('desc'); b.u32(0); b.u32(t.length + 1); b.str(t); b.u8(0); b.u32(0); b.u32(0); b.u16(0); b.u8(0); for (let i = 0; i < 67; i++) b.u8(0); return b.bytes(); })();
     const trc = (() => { const b = B(); b.str('curv'); b.u32(0); b.u32(1024); for (let i = 0; i < 1024; i++) b.u16(Math.round(lin(i / 1023) * 65535)); return b.bytes(); })();
     const cprt = (() => { const t = 'No copyright, use freely', b = B(); b.str('text'); b.u32(0); b.str(t); b.u8(0); return b.bytes(); })();
     add('desc', desc); add('cprt', cprt); add('wtpt', xyzTag(WP));

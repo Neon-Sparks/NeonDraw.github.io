@@ -1,4 +1,4 @@
-/* Neon Draw — brush engine.
+/* Neon Sparks Draw — brush engine.
  * A Stroke receives pointer samples, stabilises them, fans them out to symmetry "lanes",
  * spaces dabs along each lane and paints them with the selected engine. */
 'use strict';
@@ -15,6 +15,10 @@
     taper: 0, speedSize: 0, wetEdges: 0, bleed: 0, bristles: 24, blend: 'normal', variant: 'sketchy',
     hatchAngle: 45, cross: false, pixelPerfect: true, particle: 1, cloneAligned: false, lineWidth: 1,
     taperOut: 0, pressurePts: null, load: 0, dryness: 0, paperResponse: -1, mixMode: 'pigment', wetTime: 8, dualTip: null, dualSize: 0.5, dualCount: 3, splay: 0.5,
+    // pen pressure → flow, and each option's own pressure curve ([[pressure, amount], …], as brushes from Krita have)
+    pressureFlow: false, sizeCurve: null, opacityCurve: null, flowCurve: null,
+    // roundness varying dab to dab, several dabs per step, scatter across the stroke only or both ways
+    roundnessJitter: 0, minRoundness: 0.05, count: 1, countJitter: 0, scatterBoth: true,
   };
   // Engines whose dabs are recorded so the end of the stroke can be tapered when the pen lifts.
   const LOGGED = { pixel: 1, airbrush: 1, watercolor: 1, mixer: 1 };
@@ -26,6 +30,20 @@
       const x = i / 255;
       while (t < 1 && bez(t, a[0], b[0]) < x) t += 0.002;
       lut[i] = U.clamp(bez(t, a[1], b[1]), 0, 1);
+    }
+    return lut;
+  }
+  // A curve through points [[x, y], …] (x = pen pressure 0..1) → 256-entry table (straight lines between points).
+  function curveTable(pts) {
+    const p = (Array.isArray(pts) ? pts : []).filter((q) => Array.isArray(q) && isFinite(q[0]) && isFinite(q[1])).map((q) => [U.clamp(+q[0], 0, 1), U.clamp(+q[1], 0, 1)]).sort((a, b) => a[0] - b[0]);
+    if (p.length < 2) return null;
+    const lut = new Float32Array(256);
+    let j = 0;
+    for (let i = 0; i < 256; i++) {
+      const x = i / 255;
+      while (j < p.length - 2 && x > p[j + 1][0]) j++;
+      const a = p[j], b = p[j + 1], t = b[0] > a[0] ? U.clamp((x - a[0]) / (b[0] - a[0]), 0, 1) : 0;
+      lut[i] = x <= p[0][0] ? p[0][1] : x >= p[p.length - 1][0] ? p[p.length - 1][1] : a[1] + (b[1] - a[1]) * t;
     }
     return lut;
   }
@@ -95,6 +113,7 @@
       this.spriteInfo = this.sprites ? ND.Patterns.spriteInfo(this.s.pattern) : null;
       this.lastTick = 0;
       this.pLUT = this.s.pressurePts ? pressureTable(this.s.pressurePts) : null;
+      this.sizeLUT = curveTable(this.s.sizeCurve); this.opLUT = curveTable(this.s.opacityCurve); this.flowLUT = curveTable(this.s.flowCurve);
       this.log = this.s.taperOut > 0 && LOGGED[eng] ? [] : null;
     }
 
@@ -265,14 +284,24 @@
       const p = U.clamp(pt.p == null ? 1 : pt.p, 0, 1);
       return this.pLUT ? this.pLUT[Math.round(p * 255)] : Math.pow(p, this.s.pressureCurve || 1);
     }
+    // raw pen pressure as a table index (for the per-option curves)
+    pIndex(pt) { return Math.round(U.clamp(pt.p == null ? 1 : pt.p, 0, 1) * 255); }
     sizeFactor(L, pt) {
       const s = this.s;
-      let f = s.pressureSize ? s.minSize + (1 - s.minSize) * this.pressure(pt) : 1;
+      let f = s.pressureSize ? (this.sizeLUT ? Math.max(0.02, this.sizeLUT[this.pIndex(pt)]) : s.minSize + (1 - s.minSize) * this.pressure(pt)) : 1;
       if (s.taper > 0) { const t = U.clamp(L.dist / s.taper, 0, 1); f *= s.minSize + (1 - s.minSize) * Math.sin((t * Math.PI) / 2); }
       if (s.speedSize) f *= U.clamp(1 - s.speedSize * Math.min(1.5, L.vel / 2.5), 0.15, 2);
       return f;
     }
-    alphaFactor(pt) { return this.s.pressureOpacity ? Math.max(0.03, this.pressure(pt)) : 1; }
+    // pressure on opacity and/or flow, each through its own curve when the brush has one
+    alphaFactor(pt) {
+      const s = this.s;
+      if (!s.pressureOpacity && !s.pressureFlow) return 1;
+      let a = 1;
+      if (s.pressureOpacity) a *= this.opLUT ? this.opLUT[this.pIndex(pt)] : this.pressure(pt);
+      if (s.pressureFlow) a *= this.flowLUT ? this.flowLUT[this.pIndex(pt)] : this.pressure(pt);
+      return Math.max(0.03, a);
+    }
     dabAngle(L, pt) {
       const s = this.s;
       let a = s.angle;
@@ -359,7 +388,14 @@
 
     /* ---------- generic dab (tips, textures, patterns) ---------- */
     // Resolve a dab (all randomness decided here) and draw it; logged dabs can be replayed to taper the end.
+    // several dabs per step when the brush asks for it (scatter count), each with its own randomness
     dab(L, pt, colourOverride, alphaOverride) {
+      const s = this.s;
+      let n = 1;
+      if (s.count > 1 && alphaOverride == null) n = Math.max(1, Math.round(s.count * (1 - Math.random() * (s.countJitter || 0))));
+      for (let i = 0; i < n; i++) this.dabOne(L, pt, colourOverride, alphaOverride);
+    }
+    dabOne(L, pt, colourOverride, alphaOverride) {
       const s = this.s;
       let size = Math.max(0.5, s.size * this.sizeFactor(L, pt));
       if (s.sizeJitter) size *= 1 + (Math.random() - 0.5) * 2 * s.sizeJitter;
@@ -367,9 +403,15 @@
       let alpha = alphaOverride != null ? alphaOverride : Math.min(1, s.flow * this.alphaFactor(pt));
       if (s.opacityJitter) alpha *= 1 - Math.random() * s.opacityJitter;
       let x = pt.x, y = pt.y;
-      if (s.scatter > 0) { x += (Math.random() - 0.5) * s.scatter * size * 1.5; y += (Math.random() - 0.5) * s.scatter * size * 1.5; }
+      if (s.scatter > 0) {
+        const k = (Math.random() - 0.5) * s.scatter * size * 1.5;
+        // across the stroke only (as in Photoshop without "Both axes"), or in both directions
+        if (s.scatterBoth === false && L.dir != null) { x -= Math.sin(L.dir) * k; y += Math.cos(L.dir) * k; }
+        else { x += k; y += (Math.random() - 0.5) * s.scatter * size * 1.5; }
+      }
+      const round = s.roundnessJitter ? U.clamp(s.roundness * (1 - Math.random() * s.roundnessJitter), s.minRoundness || 0.05, 1) : s.roundness;
       const D = {
-        x, y, size, alpha, p: this.pressure(pt), dist: L.dist, lane: L,
+        x, y, size, alpha, round, p: this.pressure(pt), dist: L.dist, lane: L,
         colour: this.erasing ? '#000000' : colourOverride || this.jitterColour(),
         angle: this.dabAngle(L, pt), variant: (Math.random() * ND.Tips.count(s.tip || 'round')) | 0, seed: (Math.random() * 1e9) | 0,
       };
@@ -380,7 +422,8 @@
     drawDab(D) {
       const s = this.s;
       if (D.spr) return this.drawSprite(D);
-      const tipC = s.tip && s.tip !== 'round' ? ND.Tips.raster(s.tip, D.variant, D.size, s.roundness, D.angle) : ND.Tips.round(D.size, s.softness, s.roundness, D.angle);
+      const rd = D.round == null ? s.roundness : D.round;
+      const tipC = (s.tip && s.tip !== 'round' && ND.Tips.raster(s.tip, D.variant, D.size, rd, D.angle)) || ND.Tips.round(D.size, s.softness, rd, D.angle); // a missing tip paints round
       if (!tipC) return;
       const W = tipC.width, ox = Math.round((D.x - W / 2) * 4) / 4, oy = Math.round((D.y - W / 2) * 4) / 4;
       let img;

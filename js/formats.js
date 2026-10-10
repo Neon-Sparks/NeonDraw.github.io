@@ -1,4 +1,4 @@
-/* Neon Draw — more file formats: TIFF (open / save), PDF (save), Krita .kra (open / save), and the parts of
+/* Neon Sparks Draw — more file formats: TIFF (open / save), PDF (save), Krita .kra (open / save), and the parts of
  * Photoshop files that keep text and adjustment layers editable. All written from the published layouts. */
 /* global Float16Array */
 'use strict';
@@ -94,7 +94,7 @@
       if (comp === 5) data = tiffLZW(data, want);
       else if (comp === 8 || comp === 32946) data = await F.inflate(data);
       else if (comp === 32773) data = packBits(data, want);
-      else if (comp !== 1) throw new Error('This TIFF uses a compression Neon Draw can’t read (' + comp + ')');
+      else if (comp !== 1) throw new Error('This TIFF uses a compression Neon Sparks Draw can’t read (' + comp + ')');
       if (pred === 2) { // horizontal differencing
         const step = chunkSpp;
         for (let r = 0; r < th; r++) {
@@ -166,7 +166,7 @@
     const dpi = opts.dpi || 72;
     add(256, 4, W); add(257, 4, H); add(258, 3, new Array(spp).fill(b16 ? 16 : 8)); add(259, 3, 8); add(262, 3, cmyk ? 5 : 2);
     add(273, 4, strips.map(() => 0)); add(277, 3, spp); add(278, 4, rps); add(279, 4, strips.map((s) => s.length));
-    add(282, 5, [dpi]); add(283, 5, [dpi]); add(284, 3, 1); add(296, 3, 2); add(305, 2, enc.encode('Neon Draw\0')); add(317, 3, b16 ? 1 : 2);
+    add(282, 5, [dpi]); add(283, 5, [dpi]); add(284, 3, 1); add(296, 3, 2); add(305, 2, enc.encode('Neon Sparks Draw\0')); add(317, 3, b16 ? 1 : 2);
     if (spp === 4 && !cmyk) add(338, 3, 2);
     if (opts.icc) add(34675, 7, opts.icc);
     tags.sort((a, b) => a.tag - b.tag);
@@ -230,7 +230,7 @@
     objs[catalog - 1] = { dict: '/Type /Catalog /Pages ' + pagesId + ' 0 R' };
     objs[pagesId - 1] = { dict: '/Type /Pages /Kids [' + kids.map((k) => k + ' 0 R').join(' ') + '] /Count ' + kids.length };
     const pdfStr = (s) => '(' + String(s).replace(/[\\()]/g, '\\$&').replace(/[^\x20-\x7e]/g, '?') + ')';
-    const info = add({ dict: '/Title ' + pdfStr(opts.title || 'Neon Draw') + ' /Producer (Neon Draw)' });
+    const info = add({ dict: '/Title ' + pdfStr(opts.title || 'Neon Sparks Draw') + ' /Producer (Neon Sparks Draw)' });
     const parts = [], offsets = [];
     let pos = 0;
     const put = (u) => { parts.push(u); pos += u.length; };
@@ -301,7 +301,7 @@
   const xmlEsc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   // one paint device as Krita tiles (64 × 64, BGRA, channels stored one after another, LZF)
   function kraTiles(canvas, x0, y0, w, h, pixelSize, grey) {
-    const d = U.ctx(canvas).getImageData(x0, y0, w, h).data, parts = [], T = 64;
+    const deep = pixelSize === 8, d = deep ? ND.Deep.read16(canvas, x0, y0, w, h).data : U.ctx(canvas).getImageData(x0, y0, w, h).data, parts = [], T = 64;
     let count = 0;
     for (let ty = 0; ty < h; ty += T) {
       for (let tx = 0; tx < w; tx += T) {
@@ -309,7 +309,11 @@
         let any = false;
         for (let y = 0; y < T && ty + y < h; y++) for (let x = 0; x < T && tx + x < w; x++) {
           const s = ((ty + y) * w + tx + x) * 4, p = (y * T + x) * pixelSize;
-          if (grey) { tile[p] = d[s]; if (d[s] !== 0) any = true; } else { tile[p] = d[s + 2]; tile[p + 1] = d[s + 1]; tile[p + 2] = d[s]; tile[p + 3] = d[s + 3]; if (d[s + 3]) any = true; }
+          if (grey) { tile[p] = d[s]; if (d[s] !== 0) any = true; }
+          else if (deep) { // 16-bit BGRA, little-endian
+            [2, 1, 0, 3].forEach((c, k) => { const v = Math.round(Math.max(0, Math.min(1, d[s + c])) * 65535); tile[p + k * 2] = v & 255; tile[p + k * 2 + 1] = v >> 8; });
+            if (d[s + 3] > 0) any = true;
+          } else { tile[p] = d[s + 2]; tile[p + 1] = d[s + 1]; tile[p + 2] = d[s]; tile[p + 3] = d[s + 3]; if (d[s + 3]) any = true; }
         }
         if (!any && !grey) continue;
         // planar order (all of channel 0, then channel 1…) compresses better
@@ -326,7 +330,7 @@
   function concat(list) { let n = 0; list.forEach((u) => { n += u.length; }); const o = new Uint8Array(n); let p = 0; list.forEach((u) => { o.set(u, p); p += u.length; }); return o; }
   async function png(c) { return new Uint8Array(await (await U.canvasToBlob(c, 'image/png')).arrayBuffer()); }
   F.writeKRA = async function (doc) {
-    const W = doc.width, H = doc.height, name = (doc.name || 'image').replace(/[^\w-]+/g, '_') || 'image';
+    const W = doc.width, H = doc.height, name = (doc.name || 'image').replace(/[^\w-]+/g, '_') || 'image', deep = doc.depth === 16 && ND.Deep && ND.Deep.supported(), CS = deep ? 'RGBA16' : 'RGBA';
     const files = [{ name: 'mimetype', data: enc.encode('application/x-krita') }];
     let n = 1, skipped = 0;
     const uuid = () => '{' + 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (ch) => { const r = (Math.random() * 16) | 0; return (ch === 'x' ? r : (r & 3) | 8).toString(16); }) + '}';
@@ -334,22 +338,22 @@
       let out = '';
       for (const nd of nodes.slice().reverse()) { // Krita lists the top layer first
         const fn = 'layer' + n++, common = 'name="' + xmlEsc(nd.name) + '" filename="' + fn + '" visible="' + (nd.visible ? 1 : 0) + '" opacity="' + Math.round(nd.opacity * 255) + '" compositeop="' + (KRA_BLEND[nd.blendMode] || 'normal') + '" locked="' + (nd.locked ? 1 : 0) + '" uuid="' + uuid() + '" x="0" y="0" collapsed="' + (nd.collapsed ? 1 : 0) + '" colorlabel="0" channelflags="" intimeline="0" onionskin="0"';
-        if (nd.isGroup) { out += ind + '<layer nodetype="grouplayer" ' + common + ' passthrough="' + (nd.blendMode === 'normal' ? 1 : 0) + '">\n' + ind + ' <layers>\n' + (await layerXml(nd.children, ind + '  ')) + ind + ' </layers>\n' + ind + '</layer>\n'; continue; }
+        if (nd.isGroup) { out += ind + '<layer nodetype="grouplayer" ' + common + ' passthrough="' + (nd.blendMode === 'passthrough' ? 1 : 0) + '">\n' + ind + ' <layers>\n' + (await layerXml(nd.children, ind + '  ')) + ind + ' </layers>\n' + ind + '</layer>\n'; continue; }
         if (!nd.isPixel) { skipped++; continue; }
         const px = nd.effects && ND.Effects.any(nd.effects) ? doc.renderNode(Object.assign(Object.create(Object.getPrototypeOf(nd)), nd, { mask: null })) : nd.canvas;
-        files.push({ name: name + '/layers/' + fn, data: kraTiles(px, 0, 0, W, H, 4, false) }, { name: name + '/layers/' + fn + '.defaultpixel', data: new Uint8Array(4) });
+        files.push({ name: name + '/layers/' + fn, data: kraTiles(px, 0, 0, W, H, deep && ND.Deep.is16(px) ? 8 : 4, false) }, { name: name + '/layers/' + fn + '.defaultpixel', data: new Uint8Array(deep && ND.Deep.is16(px) ? 8 : 4) });
         let masks = '';
         if (nd.mask) {
           const mf = fn + '.mask' + n++;
           files.push({ name: name + '/layers/' + mf, data: kraTiles(nd.mask, 0, 0, W, H, 1, true) }, { name: name + '/layers/' + mf + '.defaultpixel', data: Uint8Array.of(255) });
           masks = ind + ' <masks>\n' + ind + '  <mask nodetype="transparencymask" name="Mask" filename="' + mf + '" visible="' + (nd.maskEnabled ? 1 : 0) + '" x="0" y="0" locked="0" uuid="' + uuid() + '" colorlabel="0" compositeop="normal" channelflags=""/>\n' + ind + ' </masks>\n';
         }
-        out += ind + '<layer nodetype="paintlayer" ' + common + ' colorspacename="RGBA" channellockflags=""' + (nd.alphaLock ? ' alphalocked="1"' : '') + (masks ? '>\n' + masks + ind + '</layer>\n' : '/>\n');
+        out += ind + '<layer nodetype="paintlayer" ' + common + ' colorspacename="' + (deep && ND.Deep.is16(px) ? CS : 'RGBA') + '" channellockflags=""' + (nd.alphaLock ? ' alphalocked="1"' : '') + (masks ? '>\n' + masks + ind + '</layer>\n' : '/>\n');
       }
       return out;
     };
     const layers = await layerXml(doc.root.children, '   ');
-    const xml = '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE DOC PUBLIC \'-//KDE//DTD krita 2.0//EN\' \'http://www.calligra.org/DTD/krita-2.0.dtd\'>\n<DOC xmlns="http://www.calligra.org/DTD/krita" kritaVersion="5.2.0" syntaxVersion="2.0" editor="Krita">\n <IMAGE width="' + W + '" height="' + H + '" mime="application/x-kra" name="' + xmlEsc(name) + '" description="" colorspacename="RGBA" profile="sRGB-elle-V2-srgbtrc.icc" x-res="300" y-res="300">\n  <layers>\n' + layers + '  </layers>\n </IMAGE>\n</DOC>\n';
+    const xml = '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE DOC PUBLIC \'-//KDE//DTD krita 2.0//EN\' \'http://www.calligra.org/DTD/krita-2.0.dtd\'>\n<DOC xmlns="http://www.calligra.org/DTD/krita" kritaVersion="5.2.0" syntaxVersion="2.0" editor="Krita">\n <IMAGE width="' + W + '" height="' + H + '" mime="application/x-kra" name="' + xmlEsc(name) + '" description="" colorspacename="' + CS + '" profile="sRGB-elle-V2-srgbtrc.icc" x-res="300" y-res="300">\n  <layers>\n' + layers + '  </layers>\n </IMAGE>\n</DOC>\n';
     const flat = doc.flatCopy(), k = Math.min(1, 256 / Math.max(W, H)), pv = U.canvas(Math.max(1, Math.round(W * k)), Math.max(1, Math.round(H * k)));
     U.ctx(pv).drawImage(flat, 0, 0, pv.width, pv.height);
     files.push({ name: 'maindoc.xml', data: enc.encode(xml) },
@@ -366,6 +370,7 @@
     const head = {};
     for (let i = 0; i < 5; i++) { const [k, v] = line().split(' '); head[k] = +v; }
     const T = head.TILEWIDTH || 64, ps = head.PIXELSIZE || 4, c = U.canvas(W, H), x = U.ctx(c), img = x.createImageData(W, H), o = img.data;
+    const deep = ps === 8 && ND.Deep && ND.Deep.supported(), f16 = deep ? new Float16Array(W * H * 4) : null; // 16-bit layers keep 16 bits
     if (def) for (let i = 0; i < W * H; i++) o.set(def, i * 4);
     for (let t = 0; t < head.DATA; t++) {
       const [tx, ty, , size] = line().split(','), body = bytes.subarray(p, p + +size);
@@ -383,10 +388,12 @@
         for (let xx = 0; xx < T; xx++) {
           const X = +tx + xx + ox; if (X < 0 || X >= W) continue;
           const s = (y * T + xx) * ps, dd = (Y * W + X) * 4;
+          if (f16) { const u = (q) => (tile[s + q] | (tile[s + q + 1] << 8)) / 65535; f16[dd] = u(4); f16[dd + 1] = u(2); f16[dd + 2] = u(0); f16[dd + 3] = u(6); continue; }
           if (ps === 1) { o[dd] = o[dd + 1] = o[dd + 2] = tile[s]; o[dd + 3] = 255; } else if (ps === 4) { o[dd] = tile[s + 2]; o[dd + 1] = tile[s + 1]; o[dd + 2] = tile[s]; o[dd + 3] = tile[s + 3]; } else if (ps === 8) { o[dd] = tile[s + 5]; o[dd + 1] = tile[s + 3]; o[dd + 2] = tile[s + 1]; o[dd + 3] = tile[s + 7]; }
         }
       }
     }
+    if (f16) return { canvas: ND.Deep.canvasFromHalf(f16, W, H), ps };
     x.putImageData(img, 0, 0);
     return { canvas: c, ps };
   }
@@ -398,10 +405,13 @@
     if (!xmlB) throw new Error('Not a Krita file');
     const xml = new DOMParser().parseFromString(new TextDecoder().decode(xmlB), 'application/xml'), IMG = xml.getElementsByTagName('IMAGE')[0];
     const W = +IMG.getAttribute('width'), H = +IMG.getAttribute('height'), base = IMG.getAttribute('name');
+    const deep = /^RGBA16/.test(IMG.getAttribute('colorspacename') || '') && ND.Deep && ND.Deep.supported();
+    if (ND.Deep) ND.Deep.use(deep ? 16 : 8);
     const doc = new ND.Doc(W, H, null);
+    doc.depth = deep ? 16 : 8;
     doc.name = (fname || base || 'Krita').replace(/\.kra$/i, '');
     doc.root.children = [];
-    let skipped = 0, deep = 0;
+    let skipped = 0, deepOther = 0;
     const file = (fn) => get(base + '/layers/' + fn);
     const walk = (layersEl, parent) => {
       const kids = Array.from(layersEl.children).filter((e) => e.tagName === 'layer').reverse(); // bottom first
@@ -411,13 +421,13 @@
         if (type === 'grouplayer') {
           n = new ND.Group(e.getAttribute('name'));
           Object.assign(n, common, { collapsed: e.getAttribute('collapsed') === '1' });
-          if (e.getAttribute('passthrough') === '1') n.blendMode = 'normal';
+          if (e.getAttribute('passthrough') === '1') n.blendMode = 'passthrough'; // Krita pass-through group
           const inner = Array.from(e.children).find((c) => c.tagName === 'layers');
           if (inner) walk(inner, n);
         } else if (type === 'paintlayer') {
           const bytes = file(e.getAttribute('filename'));
           if (!bytes) { skipped++; continue; }
-          if ((e.getAttribute('colorspacename') || 'RGBA') !== 'RGBA' && !/^RGBA16/.test(e.getAttribute('colorspacename'))) deep++;
+          if (!/^RGBA(16)?$/.test(e.getAttribute('colorspacename') || 'RGBA')) deepOther++;
           const dev = kraDevice(bytes, W, H, +e.getAttribute('x') || 0, +e.getAttribute('y') || 0);
           n = new ND.Layer(e.getAttribute('name'), W, H);
           U.ctx(n.canvas).drawImage(dev.canvas, 0, 0);
@@ -441,7 +451,7 @@
     }
     doc.active = doc.firstLayer();
     doc.invalidateAll();
-    doc.importNote = [skipped ? skipped + ' layer' + (skipped > 1 ? 's' : '') + ' of kinds Neon Draw doesn’t have (vector, filter, fill…) were left out' : '', deep ? 'deep-colour layers were read at 8 bits' : ''].filter(Boolean).join(' · ');
+    doc.importNote = [skipped ? skipped + ' layer' + (skipped > 1 ? 's' : '') + ' of kinds Neon Sparks Draw doesn’t have (vector, filter, fill…) were left out' : '', deepOther ? deepOther + ' layer' + (deepOther > 1 ? 's' : '') + ' in a colour space Neon Sparks Draw doesn’t have (float / CMYK…) were read approximately' : ''].filter(Boolean).join(' · ');
     return doc;
   };
 

@@ -1,4 +1,4 @@
-// Run Neon Draw's self tests in headless Chromium and fail if anything breaks.
+// Run Neon Sparks Draw's self tests in headless Chromium and fail if anything breaks.
 // Used by the GitHub Actions workflow; you can run it locally too:
 //   npm install
 //   npx playwright install chromium

@@ -1,4 +1,4 @@
-/* Neon Draw — non-destructive layer effects (layer styles).
+/* Neon Sparks Draw — non-destructive layer effects (layer styles).
  * Computed while compositing, so they follow the layer as you paint, move or mask it. */
 'use strict';
 (function () {

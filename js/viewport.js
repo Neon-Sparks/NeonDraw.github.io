@@ -1,4 +1,4 @@
-/* Neon Draw — the canvas view: rendering, pointer input and tool behaviour. */
+/* Neon Sparks Draw — the canvas view: rendering, pointer input and tool behaviour. */
 'use strict';
 (function () {
   const U = ND.U, App = ND.App;
@@ -151,6 +151,8 @@
       x.drawImage(proj, r.x, r.y, r.w, r.h, r.x, r.y, r.w, r.h);
       // print preview: show how the picture prints (CMYK proof) and/or mark colours the press can't reach
       if ((App.state.proofView || App.state.gamutWarn) && ND.Colour) ND.Colour.proofRegion(x, r, App.state.proofView, App.state.gamutWarn);
+      // Channels panel: only some colour channels shown (one alone = greyscale)
+      if (ND.Channels && ND.Channels.viewLimited(d)) ND.Channels.viewRegion(x, r, d.chanView);
     }
     return display;
   }
@@ -279,8 +281,17 @@
     if (App.isBrushTool(st.tool) || (st.tool === 'line' && st.lineUseBrush)) {
       const s = st.brush, z = st.view.zoom;
       const r = Math.max(0.5, (s.size * z) / 2);
+      // while Shift-dragging the size, the circle stays where the drag started and shows the size
+      const rs = V.drag && (V.drag.tool === 'brush-shift' || V.drag.tool === 'brush-ctrl') && V.drag.moved ? V.drag : null;
       cx.save();
-      cx.translate(c.sx, c.sy);
+      if (rs && rs.tool === 'brush-ctrl') {
+        // softness preview: a soft dot of the brush size
+        const g = cx.createRadialGradient(rs.sx, rs.sy, 0, rs.sx, rs.sy, r), hard = 1 - (s.softness || 0);
+        g.addColorStop(0, 'rgba(255,255,255,0.85)'); g.addColorStop(Math.max(0.01, hard * 0.98), 'rgba(255,255,255,0.85)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+        cx.fillStyle = g; cx.beginPath(); cx.arc(rs.sx, rs.sy, r, 0, U.TAU); cx.fill();
+      }
+      if (rs) { cx.font = '600 12px system-ui, sans-serif'; cx.fillStyle = 'rgba(0,0,0,0.6)'; const t = rs.tool === 'brush-ctrl' ? (ND.Lang ? ND.Lang.t('Softness') : 'Softness') + ' ' + Math.round((s.softness || 0) * 100) + '%' : Math.round(s.size) + ' px', tw = cx.measureText(t).width; cx.fillRect(rs.sx - tw / 2 - 6, rs.sy - r - 26, tw + 12, 18); cx.fillStyle = '#fff'; cx.fillText(t, rs.sx - tw / 2, rs.sy - r - 13); }
+      cx.translate(rs ? rs.sx : c.sx, rs ? rs.sy : c.sy);
       cx.rotate(st.view.rot);
       cx.strokeStyle = 'rgba(0,0,0,0.55)'; cx.lineWidth = 3;
       cx.beginPath();
@@ -809,7 +820,12 @@
     if (e.button !== 0 && e.pointerType !== 'pen') return;
     if (ND.Tools2.down(e, p, l)) return;
     if (tool === 'zoom') { V.drag = { tool: 'zoom', sx: l.sx, sy: l.sy, z0: st.view.zoom, alt: e.altKey, moved: false }; return; }
-    if (tool === 'eyedropper' || (App.isBrushTool(tool) && e.ctrlKey && !(tool === 'clone' || st.brush.engine === 'clone')) || (e.altKey && App.isBrushTool(tool) && tool !== 'clone')) {
+    // Ctrl+drag sideways = brush softness (a plain Ctrl+click still picks a colour)
+    if (App.isBrushTool(tool) && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && !(tool === 'clone' || st.brush.engine === 'clone')) {
+      V.drag = { tool: 'brush-ctrl', sx: l.sx, sy: l.sy, soft0: st.brush.softness == null ? 0.5 : st.brush.softness, p, moved: false };
+      return;
+    }
+    if (tool === 'eyedropper' || (e.altKey && App.isBrushTool(tool) && tool !== 'clone')) {
       pickColour(p, tool === 'eyedropper' && e.altKey);
       V.drag = { tool: 'eyedropper', alt: e.altKey && tool === 'eyedropper' };
       return;
@@ -914,14 +930,20 @@
       return;
     }
     if (App.isBrushTool(tool)) {
+      // Shift+drag sideways = brush size (Shift+click = straight line from the last stroke)
+      if (e.shiftKey) { V.drag = { tool: 'brush-shift', sx: l.sx, sy: l.sy, size0: st.brush.size, p, moved: false }; return; }
       if (!d.canPaint()) return App.blocked();
-      if (e.shiftKey) { V.drag = { tool: 'brush-shift', sx: l.sx, size0: st.brush.size, p, moved: false }; return; }
       if ((tool === 'clone' || st.brush.engine === 'clone') && !d.cloneSource) return App.toast('Ctrl+click (or Alt+click) to set the clone source first', 2400);
       startStroke(p);
     }
   }
   function startStroke(p) {
-    const d = App.doc, st = App.state;
+    const d = App.doc, st = App.state, A = d.active;
+    // layers that ask for it (the Low layer of a frequency separation) start each stroke with the colour under the brush
+    if (A && A.pickEachStroke && A.isPixel && !d.editMask && !d.quickMask && st.tool === 'brush' && !st.eraserMode) {
+      const c = ND.Brush.sampleColour(A.canvas, U.clamp(p.x, 0, d.width - 1), U.clamp(p.y, 0, d.height - 1), Math.max(1, Math.round(st.brush.size * 0.1)));
+      if (c && c.a > 0) App.setColour(U.rgbToHex(c.r, c.g, c.b), 'fg');
+    }
     V.stroke = new ND.Brush.Stroke(d, st.brush, { colour: st.fg, eraser: st.eraserMode && st.tool === 'brush' });
     V.constraint = ND.Tools2.beginConstraint(p);
     V.stroke.begin(p);
@@ -970,9 +992,14 @@
         break;
       }
       case 'eyedropper': pickColour(p, dr.alt); break;
+      case 'brush-ctrl': {
+        if (Math.abs(l.sx - dr.sx) > 3) dr.moved = true;
+        if (dr.moved) { App.setBrush({ softness: Math.round(U.clamp(dr.soft0 + (l.sx - dr.sx) / 250, 0, 1) * 100) / 100 }); App.emit('status', 'Softness ' + Math.round(st.brush.softness * 100) + '%'); }
+        break;
+      }
       case 'brush-shift': {
         if (Math.abs(l.sx - dr.sx) > 3) dr.moved = true;
-        if (dr.moved) App.setBrush({ size: U.clamp(dr.size0 + (l.sx - dr.sx) / st.view.zoom, 1, 1000) });
+        if (dr.moved) { App.setBrush({ size: Math.round(U.clamp(dr.size0 + (l.sx - dr.sx) / st.view.zoom, 1, 1000) * 10) / 10 }); App.emit('status', 'Brush size ' + Math.round(st.brush.size) + ' px'); }
         break;
       }
       case 'transform': xfDrag(dr.h, p, dr.start, e); break;
@@ -1079,6 +1106,7 @@
     if (dr.tool.startsWith('x-')) { ND.Tools2.up(e, dr); return; }
     const st = App.state;
     switch (dr.tool) {
+      case 'brush-ctrl': if (!dr.moved) pickColour(dr.p, false); break;
       case 'zoom': if (!dr.moved) { const l = local(e); zoomAt(dr.alt || e.altKey ? 0.8 : 1.25, l.sx, l.sy); } break;
       case 'brush-shift': {
         if (!dr.moved && V.lastPoint) {

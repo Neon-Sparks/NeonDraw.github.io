@@ -1,4 +1,4 @@
-/* Neon Draw — Colourise line art: the layer setup, the floating bar and automatic updates. */
+/* Neon Sparks Draw — Colourise line art: the layer setup, the floating bar and automatic updates. */
 'use strict';
 (function () {
   const U = ND.U, App = ND.App, K = ND.Colourise;

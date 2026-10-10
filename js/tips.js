@@ -1,4 +1,4 @@
-/* Neon Draw — brush tips. Tips are white-on-transparent canvases; colour is applied by tinting. */
+/* Neon Sparks Draw — brush tips. Tips are white-on-transparent canvases; colour is applied by tinting. */
 'use strict';
 (function () {
   const U = ND.U, S = 256, C = S / 2;
@@ -267,7 +267,7 @@
     const v = variants(id);
     if (!v) return null;
     const q = size < 60 ? Math.round(size) : Math.round(size / 3) * 3;
-    const key = id + variant + '|' + q + '|' + roundness.toFixed(2) + '|' + Math.round(angle / 3) * 3;
+    const key = id + '#' + variant + '|' + q + '|' + roundness.toFixed(2) + '|' + Math.round(angle / 3) * 3;
     let c = rasterCache.get(key);
     if (c) return c;
     const D = Math.max(2, Math.ceil(q * 1.05) + 2);
@@ -289,8 +289,20 @@
     return c;
   }
 
-  /* User tips: dark areas (or opaque areas of a transparent image) become paint. */
-  function addUser(id, label, img) {
+  /* User tips: dark areas (or opaque areas of a transparent image) become paint.
+   * `more`: further images of the same tip (e.g. the cells of a .gih) — each dab then picks one at random. */
+  function addUser(id, label, img, more) {
+    const list = [userCanvas(img)].concat((more || []).map(userCanvas));
+    const c = list[0];
+    const def = { id, label, user: true, variants: list.length, make: (i) => list[i % list.length], canvas: c, extra: list.slice(1) };
+    const i = DEFS.findIndex((q) => q.id === id);
+    if (i >= 0) DEFS.splice(i, 1, def); else DEFS.push(def);
+    baseCache.delete(id);
+    for (const k of Array.from(rasterCache.keys())) if (k.startsWith(id + '#')) rasterCache.delete(k);
+    ND.Tips.list = DEFS.map((q) => ({ id: q.id, label: q.label, user: !!q.user }));
+    return def;
+  }
+  function userCanvas(img) {
     const c = U.canvas(S, S), x = U.ctx(c), s = Math.min((S - 8) / img.width, (S - 8) / img.height);
     x.drawImage(img, (S - img.width * s) / 2, (S - img.height * s) / 2, img.width * s, img.height * s);
     const d = x.getImageData(0, 0, S, S), p = d.data;
@@ -302,13 +314,7 @@
       p[i] = p[i + 1] = p[i + 2] = 255;
     }
     x.putImageData(d, 0, 0);
-    const def = { id, label, user: true, make: () => c, canvas: c };
-    const i = DEFS.findIndex((q) => q.id === id);
-    if (i >= 0) DEFS.splice(i, 1, def); else DEFS.push(def);
-    baseCache.delete(id);
-    for (const k of Array.from(rasterCache.keys())) if (k.startsWith(id)) rasterCache.delete(k);
-    ND.Tips.list = DEFS.map((q) => ({ id: q.id, label: q.label, user: !!q.user }));
-    return def;
+    return c;
   }
   function removeUser(id) {
     const i = DEFS.findIndex((q) => q.id === id && q.user);
@@ -319,6 +325,8 @@
 
   ND.Tips = {
     addUser, removeUser, userTips: () => DEFS.filter((q) => q.user),
+    // the imported set a tip belongs to (null for your own tips)
+    isImported: (id) => { const d = DEFS.find((q) => q.id === id); return (d && d.imported) || null; },
     list: DEFS.map((d) => ({ id: d.id, label: d.label })),
     variants, round, tint, alpha, raster, preview,
     count: (id) => { const d = DEFS.find((q) => q.id === id); return d ? d.variants || 1 : 1; },

@@ -1,4 +1,4 @@
-/* Neon Draw — stamp library. Each stamp is drawn as vectors in a 100×100 box, so it stays crisp at any size.
+/* Neon Sparks Draw — stamp library. Each stamp is drawn as vectors in a 100×100 box, so it stays crisp at any size.
  * User stamps (captured from a selection or imported images) are bitmaps. */
 'use strict';
 (function () {

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Neon Draw — tests</title>
+  <title>Neon Sparks Draw — tests</title>
   <style>
     body { background: #141519; color: #e1e3e8; font: 13px/1.5 system-ui, sans-serif; padding: 20px; }
     h1 { font-size: 18px; } .pass { color: #6fdc8c; } .fail { color: #ff6b6b; } .sum { font-size: 15px; margin: 12px 0; }
@@ -10,14 +10,17 @@
   </style>
 </head>
 <body>
-  <h1>Neon Draw — self tests</h1>
+  <h1>Neon Sparks Draw — self tests</h1>
   <p>Open this file in a browser (double-click works). It exercises the engine without the UI.</p>
   <div class="sum" id="sum">Running…</div>
   <ul id="out"></ul>
   <script src="../js/util.js"></script>
+  <script src="../js/lang.js"></script>
+  <script src="../js/lang-ui.js"></script>
   <script src="../js/icons.js"></script>
   <script src="../js/blend.js"></script>
   <script src="../js/gpu.js"></script>
+  <script src="../js/gpufx.js"></script>
   <script src="../js/document.js"></script>
   <script src="../js/effects.js"></script>
   <script src="../js/adjust.js"></script>
@@ -32,8 +35,10 @@
   <script src="../js/anim.js"></script>
   <script src="../js/smart.js"></script>
   <script src="../js/formats.js"></script>
+  <script src="../js/brushimport.js"></script>
   <script src="../js/colour.js"></script>
   <script src="../js/deep.js"></script>
+  <script src="../js/channels.js"></script>
   <script src="../js/tips.js"></script>
   <script src="../js/patterns.js"></script>
   <script src="../js/patterns2.js"></script>
@@ -49,6 +54,7 @@
   <script src="../js/render.js"></script>
   <script src="../js/ui/controls.js"></script>
   <script src="../js/ui/command.js"></script>
+  <script src="../js/ui/i18n.js"></script>
   <script>
   'use strict';
   (async function () {
@@ -809,6 +815,415 @@
       d.history.undo();
       assert(d.depth === 16 && ND.Deep.is16(d.firstLayer().canvas), 'undo brings 16-bit back');
       ND.Deep.use(8);
+    });
+    await test('adjustment layers on the graphics card match the CPU result', () => {
+      const W = 96, H = 64, src = U.canvas(W, H), sx = U.ctx(src), id = sx.createImageData(W, H);
+      for (let i = 0; i < W * H; i++) { id.data[i * 4] = (i * 37) % 256; id.data[i * 4 + 1] = (i * 91) % 256; id.data[i * 4 + 2] = (i * 13) % 256; id.data[i * 4 + 3] = 255; }
+      sx.putImageData(id, 0, 0);
+      const kinds = [['levels', Object.assign(ND.Adjust.defaults('levels'), { rgb: { ib: 30, iw: 220, g: 1.4, ob: 10, ow: 245 } })], ['hsl', Object.assign(ND.Adjust.defaults('hsl'), { h: 40, s: 30, l: 5 })], ['curves', Object.assign(ND.Adjust.defaults('curves'), { rgb: [[0, 0], [90, 60], [180, 210], [255, 255]] })], ['brightcon', { b: 20, c: 30 }], ['vibrance', ND.Adjust.defaults('vibrance')], ['invert', {}]];
+      let worst = 0, avg = 0, n = 0, ran = 0;
+      for (const [kind, params] of kinds) {
+        const node = { kind, params, opacity: 0.9 }, r = { x: 0, y: 0, w: W, h: H }, env = { x: 0, y: 0, docW: W, docH: H, fg: '#000', bg: '#fff' };
+        const a = U.clone(src);
+        if (!ND.GPU.adjust(U.ctx(a), r, node, null, env)) continue;
+        ran++;
+        const img = sx.getImageData(0, 0, W, H), orig = new Uint8ClampedArray(img.data);
+        ND.Adjust.apply(kind, img, params, env);
+        for (let i = 0; i < img.data.length; i += 4) for (let c = 0; c < 3; c++) img.data[i + c] = orig[i + c] + (img.data[i + c] - orig[i + c]) * 0.9;
+        const g = U.ctx(a).getImageData(0, 0, W, H).data;
+        for (let i = 0; i < g.length; i += 4) for (let c = 0; c < 3; c++) { const dd = Math.abs(g[i + c] - img.data[i + c]); worst = Math.max(worst, dd); avg += dd; n++; }
+      }
+      if (!ran) { console.log('no WebGL2 here'); return; }
+      assert(avg / n < 1.5 && worst <= 16, 'colour table matches (average difference ' + (avg / n).toFixed(2) + ', worst ' + worst + ' of 255, ' + ran + ' kinds)');
+    });
+    await test('16-bit: adjustments and filters keep full precision; 16-bit PSD and Krita files', async () => {
+      if (!ND.Deep.supported()) { console.log('no 16-bit canvas here'); return; }
+      ND.Deep.use(16);
+      const d = new ND.Doc(256, 8, null); d.depth = 16;
+      const L = d.firstLayer(), x = U.ctx(L.canvas);
+      const g = x.createLinearGradient(0, 0, 256, 0); g.addColorStop(0, 'rgb(0,0,0)'); g.addColorStop(1, 'rgb(8,8,8)');
+      x.fillStyle = g; x.fillRect(0, 0, 256, 8); L.rev++;
+      const steps = (c) => new Set(Array.from(ND.Deep.read16(c, 0, 0, 256, 1).data).filter((_, i) => i % 4 === 0).map((v) => v.toFixed(5))).size;
+      // a strong levels adjustment stretches the dark gradient to full range: 8 bits would leave ~9 bands
+      d.addAdjustment('levels', Object.assign(ND.Adjust.defaults('levels'), { rgb: { ib: 0, iw: 8, g: 1, ob: 0, ow: 255 } }));
+      d.invalidateAll();
+      const proj = d.getProjection(), sp = steps(proj);
+      const top = ND.Deep.read16(proj, 250, 0, 1, 1).data[0];
+      assert(sp > 60 && top > 0.85, 'levels on 16-bit: ' + sp + ' smooth steps, reaches ' + top.toFixed(2));
+      const blur = ND.Filters.run('brightcon', L.canvas, { b: 60, c: 0 }, {});
+      assert(ND.Deep.is16(blur) && steps(blur) > 30, 'colour filter keeps 16 bits (' + steps(blur) + ' steps; 8-bit would give about 9)');
+      const sh = ND.Filters.run('sharpen', L.canvas, { amt: 40 }, {});
+      assert(ND.Deep.is16(sh) && steps(sh) > 30, 'sharpen keeps 16 bits (' + steps(sh) + ' steps)');
+      // Photoshop 16-bit round trip
+      const psd = ND.Store.exportPSD(d), u = new Uint8Array(await psd.arrayBuffer());
+      assert(((u[22] << 8) | u[23]) === 16, 'PSD header says 16 bits');
+      const back = await ND.PSD.importPSD(u.buffer, 't.psd'), BL = back.allLayers()[0];
+      assert(back.depth === 16 && ND.Deep.is16(BL.canvas) && steps(BL.canvas) >= steps(L.canvas) * 0.8, '16-bit PSD opens with all its tones (' + steps(BL.canvas) + ')');
+      // Krita 16-bit round trip
+      ND.Deep.use(16);
+      const kra = await ND.Formats.writeKRA(d), k2 = await ND.Formats.readKRA(await kra.arrayBuffer(), 't.kra'), KL = k2.allLayers()[0];
+      assert(k2.depth === 16 && ND.Deep.is16(KL.canvas) && steps(KL.canvas) >= steps(L.canvas) * 0.8, '16-bit .kra round trip (' + steps(KL.canvas) + ' steps)');
+      ND.Deep.use(8);
+    });
+    await test('menu languages', () => {
+      const Lg = ND.Lang;
+      Object.keys(Lg.T).forEach((c) => assert(Lg.T[c].length === Lg.EN.length, c + ' has every label'));
+      Lg.set('fr'); assert(Lg.t('New layer') === 'Nouveau calque' && Lg.t('Repeat Gaussian Blur') === 'Répéter Flou gaussien', 'French');
+      assert(Lg.t('Remove background: ask each time') === 'Supprimer l’arrière-plan : demander à chaque fois', 'built labels: ' + Lg.t('Remove background: ask each time'));
+      Lg.set('ja'); assert(Lg.t('File') === 'ファイル', 'Japanese');
+      Lg.set('en'); assert(Lg.t('New layer') === 'New layer', 'English default');
+    });
+    await test('frequency separation: Low + High (Linear Light) gives back the original', () => {
+      const W = 64, H = 48, src = U.canvas(W, H), x = U.ctx(src), id = x.createImageData(W, H);
+      let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+      for (let i = 0; i < id.data.length; i += 4) { const y = (i >> 2) / W | 0; id.data[i] = 40 + rnd() * 160; id.data[i + 1] = 30 + y * 3 + rnd() * 40; id.data[i + 2] = 200 - y * 2; id.data[i + 3] = 255; }
+      x.putImageData(id, 0, 0);
+      const { low, high } = ND.Retouch.split(src, 5);
+      const d = new ND.Doc(W, H, null); U.ctx(d.active.canvas).drawImage(low, 0, 0);
+      const Hl = d.addLayer('High'); U.ctx(Hl.canvas).drawImage(high, 0, 0); Hl.blendMode = 'linearlight';
+      d.invalidateAll();
+      const p = U.ctx(d.getProjection()).getImageData(0, 0, W, H).data, o = id.data, lo = U.ctx(low).getImageData(0, 0, W, H).data;
+      let worst = 0, moved = 0;
+      for (let i = 0; i < o.length; i += 4) for (let c = 0; c < 3; c++) { worst = Math.max(worst, Math.abs(p[i + c] - o[i + c])); moved = Math.max(moved, Math.abs(lo[i + c] - o[i + c])); }
+      assert(moved > 20, 'the Low layer should really be blurred (max change ' + moved + ')');
+      assert(lo[3] === 255 && lo[lo.length - 1] === 255, 'the Low layer must stay opaque at the picture edges');
+      assert(worst <= 2, 'recombined picture differs from the original by ' + worst + ' levels');
+      return 'max difference ' + worst + ' levels';
+    });
+    await test('high-pass layer is mid-grey on flat areas', () => {
+      const c = U.canvas(30, 30), x = U.ctx(c); x.fillStyle = '#4080c0'; x.fillRect(0, 0, 30, 30);
+      assert(near(px(ND.Retouch.highPass(c, 3), 15, 15), [128, 128, 128, 255], 2), 'flat area should be 50% grey');
+    });
+    await test('interface translations: every language complete and aligned', () => {
+      const L = ND.Lang, n = L.UI_EN.length, codes = Object.keys(L.UI_T);
+      assert(codes.length === 10, 'expected 10 languages, got ' + codes.length);
+      codes.forEach((k) => {
+        assert(L.UI_T[k].length === n, k + ' has ' + L.UI_T[k].length + ' entries, expected ' + n);
+        L.UI_T[k].forEach((t, i) => assert(typeof t === 'string' && t.trim(), k + ' entry ' + i + ' is empty'));
+        assert(L.T[k].length === L.EN.length, k + ' menu list misaligned');
+      });
+      assert(new Set(L.UI_EN).size === n, 'duplicate English interface strings');
+      return n + ' interface strings + ' + L.EN.length + ' menu labels × ' + codes.length + ' languages';
+    });
+    await test('live translation of labels, tooltips and new text (and back to English)', async () => {
+      const L = ND.Lang, box = document.createElement('div'), tick = () => new Promise((r) => setTimeout(r, 0));
+      box.innerHTML = '<button title="Brush size"> Cancel </button><span>Brush (B)</span><span class="nd-layer-name">Layer 1</span><span data-no-i18n>Delete</span>';
+      document.body.appendChild(box);
+      const [b, s1, s2, s3] = box.children;
+      L.set('fr');
+      assert(b.textContent === ' Annuler ' && b.title === 'Taille du pinceau', 'button: ' + b.textContent + ' / ' + b.title);
+      assert(s1.textContent === 'Pinceau (B)', 'shortcut suffix: ' + s1.textContent);
+      assert(s2.textContent === 'Layer 1' && s3.textContent === 'Delete', 'user text / opted-out text must not change');
+      const tr = ND.Lang.DOM.tr;
+      assert(tr('Your last session (“Cat”, 800 × 600) was restored from autosave.') === 'Votre dernière session (« Cat », 800 × 600) a été restaurée depuis la sauvegarde automatique.', 'template: ' + tr('Your last session (“Cat”, 800 × 600) was restored from autosave.'));
+      assert(tr('Post — square — 1080 × 1080') === 'Publication — carrée — 1080 × 1080', 'longest run: ' + tr('Post — square — 1080 × 1080'));
+      assert(tr('Softness 80%') === 'Douceur 80%', 'number suffix: ' + tr('Softness 80%'));
+      assert(tr('Pencil — Sketch') === 'Pencil — Croquis', 'parts: ' + tr('Pencil — Sketch'));
+      assert(tr('Untitled — 1920 × 1080\nDouble-click to rename') === 'Untitled — 1920 × 1080\nDouble-cliquez pour renommer', 'tab tooltip: ' + tr('Untitled — 1920 × 1080\nDouble-click to rename'));
+      b.textContent = 'Delete'; b.title = 'Softness';
+      const late = document.createElement('p'); late.textContent = 'Stop'; box.appendChild(late);
+      await tick();
+      assert(b.textContent === 'Supprimer' && b.title === 'Douceur', 'text set later: ' + b.textContent + ' / ' + b.title);
+      assert(late.textContent === 'Arrêter', 'element added later: ' + late.textContent);
+      L.set('ja');
+      assert(b.textContent === '削除' && s1.textContent === 'ブラシ (B)', 'switch to Japanese: ' + b.textContent + ' / ' + s1.textContent);
+      L.set('en');
+      assert(b.textContent === 'Delete' && b.title === 'Softness' && late.textContent === 'Stop' && s1.textContent === 'Brush (B)', 'back to English');
+      box.remove();
+    });
+    ND.GPUFX.force = true; // check the graphics-card versions even on a slow graphics chip
+    // a picture with one styled layer, for the layer-style tests
+    const styledDoc = (which) => {
+      const d = new ND.Doc(320, 200, '#ffffff'), L = d.addLayer('Styled'), x = U.ctx(L.canvas);
+      x.fillStyle = '#3080e0'; x.fillRect(90, 60, 120, 70); x.beginPath(); x.arc(250, 100, 30, 0, 6.283); x.fill();
+      const fx = ND.Effects.defaults();
+      (which || Object.keys(ND.Effects.LABELS)).forEach((k) => { fx[k].on = true; });
+      fx.stroke.size = 6; fx.glow.size = 16; fx.shadow.distance = 8;
+      L.effects = fx;
+      return { d, L };
+    };
+    const render = (d, gpu) => { ND.Doc.gpuFx = gpu; ND.Doc.fxCache = false; d.invalidateAll(); d.recompose(); ND.Doc.gpuFx = true; ND.Doc.fxCache = true; return U.ctx(d.projection).getImageData(0, 0, d.width, d.height).data; };
+    const meanDiff = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]); return s / a.length; };
+    await test('layer styles on the graphics card look like the CPU version', () => {
+      if (!ND.GPUFX.available()) return 'skipped — no WebGL2 here';
+      const out = [];
+      for (const k of Object.keys(ND.Effects.LABELS)) {
+        const { d } = styledDoc([k]), cpu = render(d, false), gpu = render(d, true);
+        const m = meanDiff(cpu, gpu);
+        assert(m < 2.5, k + ': average difference ' + m.toFixed(2) + ' levels');
+        out.push(k + ' ' + m.toFixed(2));
+      }
+      // all together, and the shadow falls the same way (down-right for the default 120° light)
+      const { d } = styledDoc(), cpu = render(d, false), gpu = render(d, true);
+      assert(meanDiff(cpu, gpu) < 3, 'all styles: average difference ' + meanDiff(cpu, gpu).toFixed(2));
+      const at = (p, x, y) => p[(y * d.width + x) * 4];
+      assert(Math.abs(at(cpu, 215, 140) - at(gpu, 215, 140)) < 30, 'shadow corner: cpu ' + at(cpu, 215, 140) + ' gpu ' + at(gpu, 215, 140));
+      return out.join(', ');
+    });
+    await test('graphics-card blur matches the CPU blur', () => {
+      if (!ND.GPUFX.available()) return 'skipped — no WebGL2 here';
+      const c = U.canvas(200, 120), x = U.ctx(c); x.fillStyle = '#ff0000'; x.fillRect(40, 30, 60, 40); x.fillStyle = '#00ff00'; x.fillRect(120, 50, 40, 40);
+      const g = ND.GPUFX.blur(c, 6), k = U.canvas(200, 120), kx = U.ctx(k); kx.filter = 'blur(6px)'; kx.drawImage(c, 0, 0);
+      assert(g, 'no result');
+      const m = meanDiff(U.ctx(g).getImageData(0, 0, 200, 120).data, kx.getImageData(0, 0, 200, 120).data);
+      // the browser's own blur is a box-blur approximation of a Gaussian; a few levels apart is expected
+      assert(m < 4, 'average difference ' + m.toFixed(2));
+      return 'average difference ' + m.toFixed(2) + ' levels';
+    });
+    await test('a styled layer is not redone when other layers change', () => {
+      const { d, L } = styledDoc(), P2 = d.addLayer('Paint');
+      d.invalidateAll(); d.recompose();
+      const before = ND.GPUFX.used, calls = { n: 0 }, inner = ND.Effects.inner;
+      ND.Effects.inner = function () { calls.n++; return inner.apply(this, arguments); };
+      try {
+        for (let i = 0; i < 3; i++) { U.ctx(P2.canvas).fillRect(10 + i * 5, 10, 4, 4); P2.rev++; d.invalidateAll(); d.recompose(); }
+        assert(ND.GPUFX.used === before && calls.n === 0, 'style was worked out again ' + (ND.GPUFX.used - before + calls.n) + ' times');
+        const cached = U.ctx(d.projection).getImageData(0, 0, d.width, d.height).data, fresh = render(d, true);
+        assert(meanDiff(cached, fresh) < 0.01, 'remembered result differs from a fresh one');
+        // changing the style itself is noticed
+        L.effects.overlay.color = '#00ff00'; d.invalidateAll(); d.recompose();
+        assert(near(px(d.projection, 150, 95), [0, 255, 0, 255], 3), 'new overlay colour not shown: ' + px(d.projection, 150, 95));
+        // working on the styled layer itself works it out live
+        d.setActive(L); U.ctx(L.canvas).clearRect(90, 60, 120, 70); d.invalidateAll(); d.recompose();
+        assert(px(d.projection, 150, 95)[1] < 250 || px(d.projection, 150, 95)[0] > 5, 'edit of the active styled layer not shown');
+      } finally { ND.Effects.inner = inner; }
+    });
+    await test('a filter layer above unchanged layers is reused', () => {
+      const d = new ND.Doc(200, 120, '#ffffff'), A = d.addLayer('A'); U.ctx(A.canvas).fillRect(50, 30, 60, 40);
+      const F = d.addAdjustment('filter', { fid: 'blur', fp: { r: 6 } });
+      const T2 = d.addLayer('Top');
+      d.invalidateAll(); d.recompose();
+      const first = U.ctx(d.projection).getImageData(0, 0, 200, 120).data.slice();
+      const apply = d.applyAdjust; let n = 0; d.applyAdjust = function () { n++; return apply.apply(this, arguments); };
+      U.ctx(T2.canvas).fillRect(0, 0, 5, 5); T2.rev++; d.invalidateAll(); d.recompose();
+      assert(n === 0, 'filter layer worked out again');
+      U.ctx(A.canvas).fillRect(150, 80, 20, 20); A.rev++; d.invalidateAll(); d.recompose();
+      assert(n === 1, 'change below the filter layer was not noticed');
+      d.applyAdjust = apply;
+      const now = U.ctx(d.projection).getImageData(0, 0, 200, 120).data;
+      assert(near(Array.from(now.slice((50 * 200 + 80) * 4, (50 * 200 + 80) * 4 + 4)), Array.from(first.slice((50 * 200 + 80) * 4, (50 * 200 + 80) * 4 + 4)), 1), 'unchanged area changed');
+      return F.kind;
+    });
+    ND.GPUFX.force = false;
+    await test('layer styles are worked out only around the layer’s content', () => {
+      const { d, L } = styledDoc(['stroke', 'shadow']);
+      const a = render(d, false);
+      // same picture when the style is computed over the whole area (no cropping)
+      const big = U.ctx(L.canvas); big.fillStyle = 'rgba(0,0,0,0.004)'; big.fillRect(0, 0, 1, 1); big.fillRect(319, 199, 1, 1); L.rev++;
+      const b = render(d, false);
+      assert(meanDiff(a, b) < 0.6, 'cropped and full results differ by ' + meanDiff(a, b).toFixed(2));
+      const e = new ND.Doc(100, 80, null), E = e.addLayer('empty'); E.effects = ND.Effects.defaults(); E.effects.glow.on = true;
+      e.invalidateAll(); e.recompose();
+      assert(px(e.projection, 50, 40)[3] === 0, 'an empty styled layer should draw nothing');
+    });
+    // a red picture with a group holding a 50% grey Multiply layer
+    const groupDoc = (mode, opacity) => {
+      const d = new ND.Doc(80, 40, '#ff0000'), G = d.addGroup(), L = d.addLayer('Mul');
+      if (d.parentOf(L) !== G) { d.root.children.splice(d.root.children.indexOf(L), 1); G.children.push(L); }
+      U.ctx(L.canvas).fillStyle = '#808080'; U.ctx(L.canvas).fillRect(0, 0, 80, 40); L.blendMode = 'multiply';
+      G.blendMode = mode; G.opacity = opacity == null ? 1 : opacity;
+      d.invalidateAll(); d.recompose();
+      return { d, G, L };
+    };
+    await test('Pass Through groups: layers inside blend with what is below the group', () => {
+      const iso = groupDoc('normal'), pt = groupDoc('passthrough');
+      assert(near(px(iso.d.projection, 10, 10), [128, 128, 128, 255], 3), 'isolated group: Multiply sees nothing below, got ' + px(iso.d.projection, 10, 10));
+      assert(near(px(pt.d.projection, 10, 10), [128, 0, 0, 255], 3), 'pass-through: Multiply darkens the red below, got ' + px(pt.d.projection, 10, 10));
+      // opacity fades between "without the group" (red) and "with it" (dark red)
+      const half = groupDoc('passthrough', 0.5);
+      assert(near(px(half.d.projection, 10, 10), [191, 0, 0, 255], 3), '50% pass-through group: ' + px(half.d.projection, 10, 10));
+      // a mask on the group: hidden half shows the plain red
+      const m = groupDoc('passthrough'); m.G.mask = ND.DocMask.newMask(80, 40, '#fff'); m.G.maskEnabled = true;
+      U.ctx(m.G.mask).fillStyle = '#000'; U.ctx(m.G.mask).fillRect(40, 0, 40, 40); m.d.invalidateAll(); m.d.recompose();
+      assert(near(px(m.d.projection, 10, 10), [128, 0, 0, 255], 3) && near(px(m.d.projection, 60, 10), [255, 0, 0, 255], 3), 'masked pass-through: ' + px(m.d.projection, 10, 10) + ' / ' + px(m.d.projection, 60, 10));
+      // an adjustment layer inside a pass-through group changes what is below it
+      const a = groupDoc('passthrough'); a.L.visible = false; const inv = a.d.addAdjustment('invert');
+      if (a.d.parentOf(inv) !== a.G) { a.d.root.children.splice(a.d.root.children.indexOf(inv), 1); a.G.children.push(inv); }
+      a.d.invalidateAll(); a.d.recompose();
+      assert(near(px(a.d.projection, 10, 10), [0, 255, 255, 255], 3), 'invert inside pass-through inverts the red below: ' + px(a.d.projection, 10, 10));
+      a.G.blendMode = 'normal'; a.d.invalidateAll(); a.d.recompose();
+      assert(near(px(a.d.projection, 10, 10), [255, 0, 0, 255], 3), 'invert inside an isolated group leaves the red alone: ' + px(a.d.projection, 10, 10));
+    });
+    await test('groups in Krita, Photoshop and OpenRaster files: isolated vs pass-through', async () => {
+      const make = () => { const d = new ND.Doc(40, 30, '#ffffff'); const A = d.addGroup(); A.name = 'Iso'; const B = d.addGroup(); B.name = 'Pass'; B.blendMode = 'passthrough'; return d; };
+      const modes = (d) => Object.fromEntries(d.allNodes().filter((n) => n.isGroup).map((n) => [n.name, n.blendMode]));
+      // Krita: the attribute itself, then a round trip
+      const kra = await ND.Formats.writeKRA(make()), z = await ND.Store.unzip(await kra.arrayBuffer());
+      const xml = new TextDecoder().decode(await z.get('maindoc.xml'));
+      const tag = (name) => (xml.match(new RegExp('<layer [^>]*name="' + name + '"[^>]*>')) || [''])[0];
+      assert(/passthrough="0"/.test(tag('Iso')), 'isolated group must be written passthrough="0": ' + tag('Iso'));
+      assert(/passthrough="1"/.test(tag('Pass')), 'pass-through group must be written passthrough="1": ' + tag('Pass'));
+      const k = modes(await ND.Formats.readKRA(await kra.arrayBuffer(), 't.kra'));
+      assert(k.Iso === 'normal' && k.Pass === 'passthrough', 'Krita round trip: ' + JSON.stringify(k));
+      const p = modes(await ND.PSD.importPSD(await ND.Store.exportPSD(make()).arrayBuffer(), 'x.psd'));
+      assert(p.Iso === 'normal' && p.Pass === 'passthrough', 'Photoshop round trip: ' + JSON.stringify(p));
+      const o = modes(await ND.Store.importORA(await (await ND.Store.exportORA(make())).arrayBuffer(), 'x.ora'));
+      assert(o.Iso === 'normal' && o.Pass === 'passthrough', 'OpenRaster round trip: ' + JSON.stringify(o));
+    });
+    await test('channels: painting on one colour channel leaves the others alone', () => {
+      const d = new ND.Doc(30, 20, '#ff0000');
+      d.chanEdit = { r: false, g: true, b: false };
+      d.paintOnActive('Fill', (x) => { x.fillStyle = '#ffffff'; x.fillRect(0, 0, 30, 20); });
+      assert(near(px(d.active.canvas, 5, 5), [255, 255, 0, 255], 1), 'only green should change: ' + px(d.active.canvas, 5, 5));
+      d.history.undo();
+      assert(near(px(d.active.canvas, 5, 5), [255, 0, 0, 255], 1), 'undo brings back the red');
+      d.chanEdit = { r: true, g: true, b: true };
+      d.paintOnActive('Fill', (x) => { x.fillStyle = '#0000ff'; x.fillRect(0, 0, 30, 20); });
+      assert(near(px(d.active.canvas, 5, 5), [0, 0, 255, 255], 1), 'all channels: normal painting');
+      // viewing one channel shows it as grey
+      const c = U.canvas(4, 4), x = U.ctx(c); x.fillStyle = '#c86432'; x.fillRect(0, 0, 4, 4);
+      ND.Channels.viewRegion(x, { x: 0, y: 0, w: 4, h: 4 }, { r: false, g: true, b: false });
+      assert(near(px(c, 1, 1), [100, 100, 100, 255], 1), 'green alone shows as grey: ' + px(c, 1, 1));
+    });
+    await test('alpha channels: save a selection, load it back, keep it in the project', async () => {
+      const d = new ND.Doc(40, 30, '#ffffff'), m = U.canvas(40, 30); U.ctx(m).fillStyle = '#fff'; U.ctx(m).fillRect(5, 5, 10, 10);
+      d.setSelection(m);
+      const ch = d.saveSelectionAsChannel('Eyes');
+      assert(ch && d.alphaChannels.length === 1, 'channel saved');
+      d.setSelection(null);
+      d.loadChannelSelection(ch, 'replace');
+      assert(d.selectionMask && px(d.selectionMask, 8, 8)[3] > 250 && px(d.selectionMask, 30, 20)[3] === 0, 'selection loaded back');
+      const d2 = await ND.Store.deserialize(await ND.Store.serializeAsync(d));
+      assert(d2.alphaChannels.length === 1 && d2.alphaChannels[0].name === 'Eyes' && px(d2.alphaChannels[0].canvas, 8, 8)[0] > 250 && px(d2.alphaChannels[0].canvas, 30, 20)[0] < 5, 'channel survives saving');
+      // painting on a channel (quick-mask style) changes it, and leaving keeps the selection as it was
+      const before = px(d.selectionMask, 30, 20)[3];
+      d.editChannel(ch);
+      assert(d.quickMask === ch.canvas, 'editing the channel');
+      U.ctx(ch.canvas).fillStyle = '#fff'; U.ctx(ch.canvas).fillRect(25, 15, 10, 10);
+      d.exitQuickMask();
+      assert(!d.quickMask && px(d.selectionMask, 30, 20)[3] === before, 'selection untouched after painting the channel');
+      d.loadChannelSelection(ch, 'replace');
+      assert(px(d.selectionMask, 30, 20)[3] > 250, 'painted part is in the channel');
+    });
+    // ---- brushes from other programs (small hand-made files in each format) ----
+    const BB = () => new ND.Formats.Buf(false);
+    const ustrB = (b, s) => { b.u32(s.length + 1); for (const ch of s) b.u16(ch.charCodeAt(0)); b.u16(0); };
+    const keyB = (b, k) => { if (k.length === 4) { b.u32(0); b.str(k); } else { b.u32(k.length); b.str(k); } };
+    // 6×4 grey tip: a filled 4×2 block in the middle (255 = paint)
+    const tipPx = () => { const a = new Uint8Array(24); for (let y = 1; y < 3; y++) for (let x = 1; x < 5; x++) a[y * 6 + x] = 255; return a; };
+    const rle = (b, px, w, h) => { // PackBits: one literal run per row
+      const rows = []; for (let y = 0; y < h; y++) rows.push(px.slice(y * w, y * w + w));
+      rows.forEach(() => b.u16(w + 1)); rows.forEach((r) => { b.u8(w - 1); b.raw(r); });
+    };
+    await test('brush import: Photoshop .abr (old and new versions, with settings)', () => {
+      // version 2: one sampled brush, RLE
+      let b = BB(); b.u16(2); b.u16(1);
+      const body = BB(); body.u32(0); body.u16(30); ustrB(body, 'Dots'); body.u8(1); for (let i = 0; i < 4; i++) body.u16(0);
+      body.i32(0); body.i32(0); body.i32(4); body.i32(6); body.u16(8); body.u8(1); rle(body, tipPx(), 6, 4);
+      const bb = body.bytes(); b.u16(2); b.u32(bb.length); b.raw(bb);
+      let r = ND.BrushImport.readABR(b.bytes(), 'Old');
+      assert(r.tips.length === 1 && r.tips[0].w === 6 && r.tips[0].h === 4 && r.tips[0].data[7] === 255 && r.tips[0].data[0] === 0, 'v2 tip pixels');
+      assert(r.presets[0].name === 'Dots' && Math.abs(r.presets[0].settings.spacing - 0.3) < 1e-6, 'v2 name and spacing');
+      // version 6.2: a 'samp' block with an id, and a 'desc' block that names it and sets size, angle, roundness, pressure
+      const id = '$' + 'abcdefgh-1234-5678-9abc-def012345678'.slice(0, 35);
+      const samp = BB(); samp.u8(id.length); samp.str(id); samp.raw(new Uint8Array(264)); samp.i32(0); samp.i32(0); samp.i32(4); samp.i32(6); samp.u16(8); samp.u8(0); samp.raw(tipPx());
+      let sb = samp.bytes(); const pad = (4 - (sb.length % 4)) % 4;
+      const sampSec = BB(); sampSec.u32(sb.length); sampSec.raw(sb); sampSec.raw(new Uint8Array(pad));
+      const d = BB(); d.u32(16); ustrB(d, ''); keyB(d, 'null'); d.u32(1); keyB(d, 'Brsh'); d.str('VlLs'); d.u32(1);
+      d.str('Objc'); ustrB(d, ''); keyB(d, 'brushPreset'); d.u32(11);
+      keyB(d, 'Nm  '); d.str('TEXT'); ustrB(d, 'Grain');
+      keyB(d, 'Brsh'); d.str('Objc'); ustrB(d, ''); keyB(d, 'sampledBrush'); d.u32(5);
+      keyB(d, 'Dmtr'); d.str('UntF'); d.str('#Pxl'); d.f64(42);
+      keyB(d, 'Angl'); d.str('UntF'); d.str('#Ang'); d.f64(30);
+      keyB(d, 'Rndn'); d.str('UntF'); d.str('#Prc'); d.f64(50);
+      keyB(d, 'Spcn'); d.str('UntF'); d.str('#Prc'); d.f64(20);
+      keyB(d, 'sampledData'); d.str('TEXT'); ustrB(d, id);
+      keyB(d, 'useTipDynamics'); d.str('bool'); d.u8(1);
+      keyB(d, 'szVr'); d.str('Objc'); ustrB(d, ''); keyB(d, 'brVr'); d.u32(1); keyB(d, 'bVTy'); d.str('long'); d.i32(2);
+      keyB(d, 'usePaintDynamics'); d.str('bool'); d.u8(1);
+      const brVr = (key, type, jitter) => { keyB(d, key); d.str('Objc'); ustrB(d, ''); keyB(d, 'brVr'); d.u32(2); keyB(d, 'bVTy'); d.str('long'); d.i32(type); keyB(d, 'jitter'); d.str('UntF'); d.str('#Prc'); d.f64(jitter); };
+      brVr('prVr', 2, 0); // Transfer: flow from pen pressure
+      keyB(d, 'useScatter'); d.str('bool'); d.u8(1);
+      brVr('scatterDynamics', 0, 300);
+      keyB(d, 'bothAxes'); d.str('bool'); d.u8(0);
+      keyB(d, 'Cnt '); d.str('long'); d.i32(3);
+      brVr('roundnessDynamics', 0, 50);
+      b = BB(); b.u16(6); b.u16(2);
+      const ss = sampSec.bytes(), ds = d.bytes();
+      b.str('8BIM'); b.str('samp'); b.u32(ss.length); b.raw(ss);
+      b.str('8BIM'); b.str('desc'); b.u32(ds.length); b.raw(ds);
+      r = ND.BrushImport.readABR(b.bytes(), 'New');
+      const p = r.presets[0];
+      assert(r.tips.length === 1 && r.tips[0].data[8] === 255, 'v6 tip pixels');
+      assert(p.name === 'Grain' && p.tip === r.tips[0].ref, 'v6 preset linked to its tip: ' + JSON.stringify(p));
+      assert(p.settings.size === 42 && p.settings.angle === 30 && Math.abs(p.settings.roundness - 0.5) < 1e-6 && Math.abs(p.settings.spacing - 0.2) < 1e-6 && p.settings.pressureSize === true, 'v6 settings: ' + JSON.stringify(p.settings));
+      const ps = p.settings;
+      assert(ps.pressureFlow === true && ps.scatter === 2 && ps.scatterBoth === false && ps.count === 3 && Math.abs(ps.roundnessJitter - 0.5) < 1e-6, 'v6 dynamics (flow, scatter, count, roundness): ' + JSON.stringify(ps));
+    });
+    // a GIMP .gbr (version 2, grey)
+    const gbrBytes = (name) => { const b = BB(), nm = new TextEncoder().encode(name + '\0'); b.u32(28 + nm.length); b.u32(2); b.u32(6); b.u32(4); b.u32(1); b.str('GIMP'); b.u32(40); b.raw(nm); b.raw(tipPx()); return b.bytes(); };
+    // a .kpp: a PNG whose compressed 'preset' text holds Krita's settings
+    const kppBytes = async (xml) => {
+      const b = BB(); b.raw(Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10));
+      const z = await ND.Formats.deflate(new TextEncoder().encode(xml)), body = BB(); body.str('preset'); body.u8(0); body.u8(0); body.raw(z);
+      const c = body.bytes(); b.u32(c.length); b.str('zTXt'); b.raw(c); b.u32(0); b.u32(0); b.str('IEND'); b.u32(0);
+      return b.bytes();
+    };
+    const kxml = (bd, extra) => '<Preset paintopid="paintbrush" name="c)_Soft_Pencil"> <param name="brush_definition" type="string"><![CDATA[' + bd + ']]></param> <param name="OpacityValue" type="string"><![CDATA[0.7]]></param> <param name="PressureSize" type="string"><![CDATA[true]]></param> <param name="SizeSensor" type="string"><![CDATA[<params id="pressure"/>]]></param>' + (extra || '') + ' </Preset>';
+    await test('brush import: GIMP .gbr / .gih tips and Krita .kpp presets', async () => {
+      const g = ND.BrushImport.readGBR(gbrBytes('Chalk dot'), 'x');
+      assert(g.label === 'Chalk dot' && g.w === 6 && g.h === 4 && g.data[13] === 255 && Math.abs(g.spacing - 0.4) < 1e-6, '.gbr: ' + JSON.stringify({ l: g.label, w: g.w, s: g.spacing }));
+      const gih = BB(); gih.str('Sparkles\n2 ncells:2 cellwidth:6 cellheight:4 step:100 dim:1 cols:1 rows:1 placement:constant rank0:2 sel0:random\n'); gih.raw(gbrBytes('a')); gih.raw(gbrBytes('b'));
+      const gi = ND.BrushImport.readGIH(gih.bytes(), 'x');
+      assert(gi.label === 'Sparkles' && gi.variants === 2 && gi.w === 6, '.gih: ' + gi.label + ' ' + gi.variants);
+      // auto (generated) tip: size, roundness, softness, opacity, pressure
+      let k = await ND.BrushImport.readKPP(await kppBytes(kxml('<Brush type="auto_brush" spacing="0.05" angle="1.5708" useAutoSpacing="0"><MaskGenerator type="circle" diameter="35" ratio="0.5" hfade="0.25" vfade="0.25"/></Brush>')), 'f', ND.Formats.inflate, null);
+      let s = k.presets[0].settings;
+      assert(k.presets[0].name === 'Soft Pencil', 'Krita name tidied: ' + k.presets[0].name);
+      assert(s.size === 35 && Math.abs(s.roundness - 0.5) < 1e-6 && Math.abs(s.softness - 0.75) < 1e-6 && s.angle === 90 && Math.abs(s.opacity - 0.7) < 1e-6 && s.pressureSize === true && Math.abs(s.spacing - 0.05) < 1e-6, 'auto tip settings: ' + JSON.stringify(s));
+      // per-option pressure curves, direction rotation, scatter across the stroke
+      const extra = '<param name="FlowSensor" type="string"><![CDATA[<params id="pressure"><curve>0,0;0.5,1;1,1;</curve></params>]]></param><param name="FlowUseCurve" type="string"><![CDATA[true]]></param>'
+        + '<param name="SizeSensor2" type="string"><![CDATA[x]]></param><param name="PressureRotation" type="string"><![CDATA[true]]></param><param name="RotationSensor" type="string"><![CDATA[<params id="drawingangle"/>]]></param>'
+        + '<param name="PressureScatter" type="string"><![CDATA[true]]></param><param name="ScatterValue" type="string"><![CDATA[1.5]]></param><param name="Scattering/AxisY" type="string"><![CDATA[false]]></param>';
+      k = await ND.BrushImport.readKPP(await kppBytes(kxml('<Brush type="auto_brush" spacing="0.1" angle="0"><MaskGenerator type="circle" diameter="20" ratio="1" hfade="1" vfade="1"/></Brush>', extra).replace('<params id="pressure"/>', '<params id="pressure"><curve>0,0.3;1,1;</curve></params>')), 'f', ND.Formats.inflate, null);
+      s = k.presets[0].settings;
+      assert(s.pressureFlow && JSON.stringify(s.flowCurve) === '[[0,0],[0.5,1],[1,1]]', 'flow curve: ' + JSON.stringify(s.flowCurve));
+      assert(s.pressureSize && JSON.stringify(s.sizeCurve) === '[[0,0.3],[1,1]]', 'size curve: ' + JSON.stringify(s.sizeCurve));
+      assert(s.angleMode === 'direction' && Math.abs(s.scatter - 1) < 1e-6 && s.scatterBoth === false, 'rotation / scatter: ' + JSON.stringify(s));
+      // Gaussian mask: a small fade is a crisp edge
+      k = await ND.BrushImport.readKPP(await kppBytes(kxml('<Brush type="auto_brush" spacing="0.1" angle="0"><MaskGenerator id="gauss" type="circle" diameter="3" ratio="1" hfade="0.04" vfade="0.04"/></Brush>')), 'f', ND.Formats.inflate, null);
+      assert(k.presets[0].settings.softness < 0.1, 'Gaussian fade 0.04 should be crisp: ' + k.presets[0].settings.softness);
+      // tip from a file (found next to it, as in a bundle): size = tip size × scale
+      k = await ND.BrushImport.readKPP(await kppBytes(kxml('<Brush type="gbr_brush" filename="dot.gbr" scale="5" spacing="0.2" angle="0"/>')), 'f', ND.Formats.inflate, async (f) => (f === 'dot.gbr' ? gbrBytes('Dot') : null));
+      assert(k.tips.length === 1 && k.presets[0].tip === k.tips[0].ref && k.presets[0].settings.size === 30, 'tip file: ' + JSON.stringify(k.presets[0]));
+      // tip missing: still imported, with a note
+      k = await ND.BrushImport.readKPP(await kppBytes(kxml('<Brush type="png_brush" filename="gone.png" scale="1"/>')), 'f', ND.Formats.inflate, null);
+      assert(k.presets.length === 1 && !k.presets[0].tip && k.notes.length === 1, 'missing tip noted');
+    });
+    await test('brush import: Krita .bundle (presets, their tips, and loose tips)', async () => {
+      const zipBlob = await ND.Store.zip([
+        { name: 'mimetype', data: new TextEncoder().encode('application/x-krita-resourcebundle') },
+        { name: 'paintoppresets/b)_Ink_Pen.kpp', data: await kppBytes(kxml('<Brush type="gbr_brush" filename="dot.gbr" scale="2" spacing="0.1" angle="0"/>')) },
+        { name: 'brushes/dot.gbr', data: gbrBytes('Dot') },
+        { name: 'brushes/extra.gbr', data: gbrBytes('Extra') },
+      ]);
+      const r = await ND.BrushImport.readBundle(await ND.Store.unzip(await zipBlob.arrayBuffer()), 'My bundle', ND.Formats.inflate);
+      assert(r.presets.length === 2 && r.tips.length === 2, 'presets ' + r.presets.length + ', tips ' + r.tips.length);
+      assert(r.presets[0].name === 'Soft Pencil' && r.presets[0].settings.size === 12, 'bundle preset uses its tip: ' + JSON.stringify(r.presets[0]));
+      assert(r.presets[1].name === 'Extra', 'unused tip becomes a preset');
+    });
+    await test('brush engine: per-option pressure curves, pressure → flow, count, roundness jitter, scatter across', () => {
+      const d = new ND.Doc(200, 120, '#ffffff'), L = { dist: 1e9, vel: 0, tf: { rot: 0 }, dir: 0 };
+      let st = new ND.Brush.Stroke(d, { pressureSize: true, sizeCurve: [[0, 0.5], [1, 1]] }, { colour: '#000000' });
+      assert(Math.abs(st.sizeFactor(L, { p: 0 }) - 0.5) < 0.01 && Math.abs(st.sizeFactor(L, { p: 0.5 }) - 0.75) < 0.01, 'size curve: ' + st.sizeFactor(L, { p: 0.5 }));
+      st = new ND.Brush.Stroke(d, { pressureFlow: true, flowCurve: [[0, 0], [0.5, 1], [1, 1]] }, { colour: '#000000' });
+      assert(Math.abs(st.alphaFactor({ p: 0.25 }) - 0.5) < 0.01 && st.alphaFactor({ p: 0.8 }) > 0.99, 'flow curve: ' + st.alphaFactor({ p: 0.25 }));
+      st = new ND.Brush.Stroke(d, { pressureFlow: true, pressureOpacity: true, opacityCurve: [[0, 0.5], [1, 0.5]] }, { colour: '#000000' });
+      assert(Math.abs(st.alphaFactor({ p: 0.4 }) - 0.2) < 0.02, 'opacity × flow: ' + st.alphaFactor({ p: 0.4 }));
+      st = new ND.Brush.Stroke(d, {}, { colour: '#000000' });
+      assert(st.alphaFactor({ p: 0.1 }) === 1, 'no pressure options → full');
+      // several dabs per step, each with its own roundness, scattered only across a horizontal stroke
+      st = new ND.Brush.Stroke(d, { count: 5, scatter: 2, scatterBoth: false, roundnessJitter: 0.8, minRoundness: 0.2, size: 20, stabilizer: 0 }, { colour: '#000000' });
+      const dabs = [];
+      st.drawDab = (D) => dabs.push(D);
+      st.dab(Object.assign({}, L, { last: null }), { x: 100, y: 60, p: 1 });
+      assert(dabs.length === 5, 'count: ' + dabs.length + ' dabs');
+      assert(dabs.every((D) => Math.abs(D.x - 100) < 1e-6) && dabs.some((D) => Math.abs(D.y - 60) > 0.5), 'scatter only across the stroke');
+      assert(dabs.every((D) => D.round >= 0.2 && D.round <= 1) && dabs.some((D) => D.round < 0.99), 'roundness varies: ' + dabs.map((D) => D.round.toFixed(2)));
+      // a real stroke with the new settings still paints
+      st = new ND.Brush.Stroke(d, { size: 16, flow: 1, stabilizer: 0, count: 3, scatter: 0.5, pressureFlow: true, flowCurve: [[0, 0.2], [1, 1]] }, { colour: '#000000' });
+      st.begin({ x: 20, y: 60, p: 0.8 }); for (let i = 1; i <= 20; i++) st.move({ x: 20 + i * 8, y: 60, p: 0.8 }); st.end('stroke');
+      assert(px(d.getProjection(), 100, 60)[0] < 200, 'stroke painted: ' + px(d.getProjection(), 100, 60));
     });
     document.getElementById('sum').innerHTML = '<span class="' + (fail ? 'fail' : 'pass') + '">' + pass + ' passed, ' + fail + ' failed</span>';
   })();

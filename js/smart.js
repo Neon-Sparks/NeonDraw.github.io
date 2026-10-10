@@ -1,4 +1,4 @@
-/* Neon Draw — smart objects. A smart layer keeps its original picture (`src`, full quality) plus how it is
+/* Neon Sparks Draw — smart objects. A smart layer keeps its original picture (`src`, full quality) plus how it is
  * placed on the canvas: an affine matrix `m` [a, b, c, d, e, f], or a warp / distort `mesh` (g × g points).
  * The layer's pixels are always redrawn from the original, so scaling down and up again, rotating many
  * times or warping never loses quality. "Edit contents" opens the original (with its own layers) in a tab.

@@ -1,4 +1,4 @@
-/* Neon Draw — application core: state, events, commands, files, clipboard, shortcuts. */
+/* Neon Sparks Draw — application core: state, events, commands, files, clipboard, shortcuts. */
 'use strict';
 (function () {
   const U = ND.U;
@@ -21,6 +21,7 @@
     { id: 'heal', label: 'Spot healing brush', key: 'J', icon: 'heal', group: 'Retouch' },
     { id: 'patch', label: 'Patch (drag a selection onto good texture)', key: '', icon: 'patch', group: 'Retouch' },
     { id: 'redeye', label: 'Red-eye removal', key: '', icon: 'redeye', group: 'Retouch' },
+    { id: 'camove', label: 'Content-aware move (AI) — select something, then drag it; AI fills the hole', key: '', icon: 'camove', group: 'Retouch' },
     { id: 'airemove', label: 'AI remove — paint over (or select) something and AI fills in what’s behind it', key: '', icon: 'airemove', group: 'Retouch' },
     { id: 'liquify', label: 'Liquify (push, bloat, pinch, twirl)', key: '', icon: 'liquify', group: 'Retouch' },
     { id: 'sel-rect', label: 'Rectangular select', key: 'R', icon: 'sel-rect', group: 'Select' },
@@ -67,7 +68,7 @@
     grid: false, gridSize: 64, pixelGrid: true, wrap: false, showSymmetry: true, hideUI: false,
     dockWidth: 300, collapsed: {},
     touchMode: 'auto',
-    rightClick: 'palette', favBrushes: null, recentCommands: [], smartAI: false, aiModel: null, aiRemember: false, aiClean: true, toolboxMode: 'left', toolboxCols: 0, toolboxPos: null, dockCols: 1, dockLayout: null, smartFilter: false, strokePressure: true, showTimeline: false, aiUpscaler: 'sr2', predictPoints: false, prefsRev: 2, proofView: false, gamutWarn: false, pdfDpi: 300, newDepth: 8, pressureOn: true, pressureSens: 50, airMode: 'paint', airSize: 40, airAll: true, airNewLayer: true, airAuto: true, aiInpaint: 'migan',
+    rightClick: 'palette', favBrushes: null, recentCommands: [], smartAI: false, aiModel: null, aiRemember: false, aiClean: true, toolboxMode: 'left', toolboxCols: 0, toolboxPos: null, dockCols: 1, dockLayout: null, smartFilter: false, strokePressure: true, showTimeline: false, aiUpscaler: 'sr2', predictPoints: false, prefsRev: 2, proofView: false, gamutWarn: false, pdfDpi: 300, newDepth: 8, pressureOn: true, pressureSens: 50, airMode: 'paint', airSize: 40, airAll: true, airNewLayer: true, airAuto: true, aiInpaint: 'migan', aiInpaintAsk: false, aiUpscaleAsk: true, gpuBlend: true, gpuAdjust: true, gpuAI: true, gpuFx: true, lockToolbox: false, lockPanels: false, lang: 'en', cmMode: 'move', cmAll: true, cmNewLayer: true, fsRadius: 6,
   });
 
   const App = {
@@ -768,9 +769,13 @@
   };
 
   /* ---------------- custom presets / stamps / patterns persistence ---------------- */
-  const CP = 'pigment-custom-presets', US = 'neondraw-user-stamps', UP = 'neondraw-user-patterns', UT = 'neondraw-user-tips', UG = 'neondraw-gradients';
+  const CP = 'pigment-custom-presets', US = 'neondraw-user-stamps', UP = 'neondraw-user-patterns', UT = 'neondraw-user-tips', UG = 'neondraw-gradients', IT = 'nd-imported-tips';
   App.loadUserData = async function () {
-    this.customPresets = ND.Store.getJSON(CP, []).map((p) => ({ name: p.name, cat: 'My Brushes', settings: ND.Brush.normalise(p.settings), custom: true }));
+    this.customPresets = ND.Store.getJSON(CP, []).map((p) => ({ name: p.name, cat: p.imported || 'My Brushes', imported: p.imported || null, settings: ND.Brush.normalise(p.settings), custom: true }));
+    // brush tips from imported Photoshop / Krita / GIMP brushes (kept in the browser's database: there can be many)
+    for (const t of (await ND.Store.idbGet(IT)) || []) {
+      try { const im = await U.loadImage(t.png), more = []; for (const m of t.more || []) more.push(await U.loadImage(m)); const def = ND.Tips.addUser(t.id, t.label, im, more); def.imported = t.set; } catch (e) { /* skip */ }
+    }
     for (const s of ND.Store.getJSON(US, [])) {
       try { const im = await U.loadImage(s.png); const c = U.canvas(im.width, im.height); U.ctx(c).drawImage(im, 0, 0); ND.Stamps.addUser(s.name, c); } catch (e) { /* skip */ }
     }
@@ -783,7 +788,7 @@
     }
   };
   App.saveCustomPresets = function () {
-    ND.Store.setJSON(CP, this.customPresets.map((p) => ({ name: p.name, settings: p.settings })));
+    if (!ND.Store.setJSON(CP, this.customPresets.map((p) => (p.imported ? { name: p.name, settings: p.settings, imported: p.imported } : { name: p.name, settings: p.settings })))) this.toast('Browser storage is full — some brush presets are kept for this session only', 3500);
     this.emit('presets');
   };
   App.saveBrushPreset = function (name) {
@@ -800,7 +805,7 @@
   };
   App.exportBrushes = function () {
     const data = { app: 'neondraw-brushes', version: 1, presets: this.customPresets.map((p) => ({ name: p.name, settings: p.settings })) };
-    U.download('neon-draw-brushes.json', new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }));
+    U.download('neon-sparks-draw-brushes.json', new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }));
   };
   App.importBrushes = async function (file) {
     try {
@@ -869,7 +874,7 @@
 
   /* ---------------- custom brush tips & gradients ---------------- */
   App.saveUserTips = function () {
-    const ok = ND.Store.setJSON(UT, ND.Tips.userTips().map((t) => ({ id: t.id, label: t.label, png: t.canvas.toDataURL('image/png') })));
+    const ok = ND.Store.setJSON(UT, ND.Tips.userTips().filter((t) => !ND.Tips.isImported(t.id)).map((t) => ({ id: t.id, label: t.label, png: t.canvas.toDataURL('image/png') })));
     if (!ok) this.toast('Browser storage is full — tip kept for this session only', 3000);
     this.emit('tips');
   };
@@ -892,6 +897,106 @@
   App.importTipImage = async function (file) {
     try { this.addTipFromImage(await U.blobToImage(file), file.name.replace(/\.[^.]+$/, '').slice(0, 20)); } catch (e) { this.toast('Could not read that image'); }
   };
+  /* ---------------- brushes from Photoshop, Krita and GIMP ---------------- */
+  // the imported sets (each shows as a category in Brush presets)
+  App.brushSets = function () { return Array.from(new Set(this.customPresets.filter((p) => p.imported).map((p) => p.imported))); };
+  App.chooseBrushFiles = function () {
+    const inp = U.h('input', { type: 'file', multiple: true, accept: '.abr,.kpp,.bundle,.gbr,.gih,.png,.json,.zip', style: { display: 'none' } });
+    inp.addEventListener('change', () => { if (inp.files.length) this.importAnyBrushes(Array.from(inp.files)); inp.remove(); });
+    document.body.appendChild(inp);
+    inp.click();
+  };
+  // .json (this app's own export), .abr (Photoshop), .kpp / .bundle (Krita), .gbr / .gih / .png (tips)
+  App.importAnyBrushes = async function (files) {
+    const BI = ND.BrushImport, inflate = ND.Formats.inflate, notes = [], loose = { name: 'Imported', presets: [], tips: [], notes: [] };
+    let presets = 0, tips = 0, sets = 0;
+    this.toast('Reading brushes…', 60000);
+    for (const file of files) {
+      const ext = (file.name.match(/\.([a-z0-9]+)$/i) || ['', ''])[1].toLowerCase(), base = file.name.replace(/\.[^.]+$/, '');
+      try {
+        if (ext === 'json') { await this.importBrushes(file); continue; }
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        let set = null;
+        if (ext === 'abr') set = BI.readABR(bytes, base);
+        else if (ext === 'bundle' || ext === 'zip') set = await BI.readBundle(await ND.Store.unzip(bytes.buffer), base, inflate);
+        else if (ext === 'kpp') { const k = await BI.readKPP(bytes, base, inflate, null); k.tips.forEach((t) => { t.ref = base + '/' + t.ref; }); k.presets.forEach((p) => { if (p.tip) p.tip = base + '/' + p.tip; }); loose.presets.push(...k.presets); loose.tips.push(...k.tips); notes.push(...k.notes); continue; }
+        else if (['gbr', 'gih', 'png'].includes(ext)) { const k = BI.readTipFile(bytes, file.name); loose.presets.push(...k.presets); loose.tips.push(...k.tips); continue; }
+        else throw new Error('this kind of file is not a brush');
+        const r = await this.addBrushSet(set);
+        presets += r.presets; tips += r.tips; sets++;
+        notes.push(...set.notes);
+      } catch (e) { notes.push(file.name + ': ' + e.message); }
+    }
+    if (loose.presets.length) { const r = await this.addBrushSet(loose); presets += r.presets; tips += r.tips; sets++; }
+    if (notes.length) console.info('Brush import notes:\n' + notes.join('\n'));
+    if (!presets) { this.toast(notes[0] ? 'No brushes imported — ' + notes[0] : 'No brushes found in that file', 5000); return; }
+    this.toast('Imported ' + presets + ' brush' + (presets === 1 ? '' : 'es') + (tips ? ' (' + tips + ' tip' + (tips === 1 ? '' : 's') + ')' : '') + (sets > 1 ? ' in ' + sets + ' sets' : '') + (notes.length ? ' — ' + notes.length + ' note' + (notes.length === 1 ? '' : 's') + ': ' + notes[0] : ''), 6500);
+  };
+  // store one set read by ND.BrushImport: its tips, then its presets (as a category of their own)
+  App.addBrushSet = async function (set) {
+    const builtin = new Set(['All', 'My Brushes'].concat(ND.Presets.CATS));
+    let cat = (set.name || 'Imported').slice(0, 32), n = 2;
+    const taken = (c) => builtin.has(c) || this.customPresets.some((p) => p.cat === c && p.imported !== c);
+    while (taken(cat)) cat = (set.name || 'Imported').slice(0, 28) + ' ' + n++;
+    // tips: grey coverage (from .abr / .gbr / .gih) or an image (.png / .svg)
+    const ids = {}, sizes = {}, stored = (await ND.Store.idbGet(IT)) || [];
+    let k = 0;
+    for (const t of set.tips) {
+      try {
+        let c;
+        const greyCanvas = (g) => {
+          const cc = U.canvas(g.w, g.h), img = U.ctx(cc).createImageData(g.w, g.h);
+          for (let i = 0; i < g.w * g.h; i++) img.data[i * 4 + 3] = g.data[i];
+          U.ctx(cc).putImageData(img, 0, 0);
+          return cc;
+        };
+        const frames = t.frames ? t.frames.filter((g) => g.kind === 'grey').map(greyCanvas) : [];
+        if (t.kind === 'grey') {
+          c = greyCanvas(t);
+        } else {
+          const im = await U.blobToImage(new Blob([t.bytes], { type: t.mime }));
+          c = U.canvas(im.width || 256, im.height || 256); U.ctx(c).drawImage(im, 0, 0, c.width, c.height);
+        }
+        sizes[t.ref] = Math.max(c.width, c.height);
+        let id;
+        do { id = 'imp' + Date.now().toString(36) + (k++).toString(36); } while (ND.Tips.list.some((q) => q.id === id));
+        const def = ND.Tips.addUser(id, t.label || cat, c, frames);
+        def.imported = cat;
+        ids[t.ref] = id;
+        stored.push({ id, label: t.label || cat, set: cat, png: def.canvas.toDataURL('image/png'), more: def.extra.map((x) => x.toDataURL('image/png')) });
+      } catch (e) { set.notes.push('tip “' + (t.label || '?') + '” could not be read'); }
+    }
+    if (!(await ND.Store.idbSet(IT, stored))) set.notes.push('the browser could not store the brush tips — they last for this session only');
+    // presets, with names that don't clash with other brushes
+    const names = new Set(this.customPresets.map((p) => p.name).concat(ND.Presets.LIST.map((p) => p.name)));
+    let added = 0;
+    for (const p of set.presets) {
+      const s = Object.assign({}, p.settings);
+      if (p.tip) { if (!ids[p.tip]) continue; s.tip = ids[p.tip]; if (p.tipScale && sizes[p.tip]) s.size = U.clamp(Math.round(sizes[p.tip] * p.tipScale), 1, 1000); }
+      if (p.dualTip && ids[p.dualTip]) s.dualTip = ids[p.dualTip];
+      let name = (p.name || cat).slice(0, 48), i = 2;
+      while (names.has(name)) name = (p.name || cat).slice(0, 44) + ' ' + i++;
+      names.add(name);
+      this.customPresets.push({ name, cat, imported: cat, settings: ND.Brush.normalise(s), custom: true });
+      added++;
+    }
+    this.saveCustomPresets();
+    this.state.presetCat = cat;
+    this.emit('presets');
+    return { presets: added, tips: Object.keys(ids).length, cat };
+  };
+  // remove a whole imported set (its presets and the tips only it used)
+  App.deleteBrushSet = async function (cat) {
+    this.customPresets = this.customPresets.filter((p) => p.imported !== cat);
+    const gone = ND.Tips.userTips().filter((t) => ND.Tips.isImported(t.id) === cat).map((t) => t.id);
+    gone.forEach((id) => ND.Tips.removeUser(id));
+    if (gone.includes(this.state.brush.tip)) this.setBrush({ tip: 'round' });
+    await ND.Store.idbSet(IT, ((await ND.Store.idbGet(IT)) || []).filter((t) => t.set !== cat));
+    if (this.state.presetCat === cat) this.state.presetCat = 'All';
+    this.saveCustomPresets();
+    this.emit('tips');
+    this.toast('Removed the brush set “' + cat + '”');
+  };
   App.deleteUserTip = function (id) { ND.Tips.removeUser(id); if (this.state.brush.tip === id) this.setBrush({ tip: 'round' }); this.saveUserTips(); };
   App.saveGradient = function (name, stops) {
     ND.Render.customGradients[name] = stops;
@@ -909,7 +1014,8 @@
   };
 
   /* ---------------- preferences ---------------- */
-  App.savePrefsSoon = U.debounce(() => {
+  // save the settings now (savePrefsSoon waits a moment so slider drags don't save every step)
+  App.savePrefs = function () {
     const s = App.state;
     ND.Store.savePrefs({
       brush: s.brush, brushName: s.brushName, fg: s.fg, bg: s.bg, recent: s.recent, eraserSize: s.eraserSize, toolSettings: s.toolSettings,
@@ -917,13 +1023,14 @@
       fillPattern: s.fillPattern, gradType: s.gradType, gradTo: s.gradTo, dockWidth: s.dockWidth, collapsed: s.collapsed,
       gridSize: s.gridSize, palette: App.palette, palettes: App.userPalettes, shapeFill: s.shapeFill, shapeStroke: s.shapeStroke, shapeWidth: s.shapeWidth,
       lineUseBrush: s.lineUseBrush, touchMode: s.touchMode, healSize: s.healSize, liqSize: s.liqSize, liqStrength: s.liqStrength, liqMode: s.liqMode, fillGap: s.fillGap, rulers: s.rulers,
-      rightClick: s.rightClick, favBrushes: s.favBrushes, lastPaper: s.lastPaper, harmony: s.harmony, smartAI: s.smartAI, aiModel: s.aiModel, aiRemember: s.aiRemember, aiClean: s.aiClean, toolboxMode: s.toolboxMode, toolboxCols: s.toolboxCols, toolboxPos: s.toolboxPos, dockCols: s.dockCols, dockLayout: s.dockLayout, smartFilter: s.smartFilter, strokePressure: s.strokePressure, showTimeline: s.showTimeline, aiUpscaler: s.aiUpscaler, predictPoints: s.predictPoints, proofView: s.proofView, gamutWarn: s.gamutWarn, pdfDpi: s.pdfDpi, newDepth: s.newDepth, pressureOn: s.pressureOn, pressureSens: s.pressureSens, airMode: s.airMode, airSize: s.airSize, airAll: s.airAll, airNewLayer: s.airNewLayer, airAuto: s.airAuto, aiInpaint: s.aiInpaint, prefsRev: s.prefsRev, recentCommands: s.recentCommands, maskView: s.maskView, maskParams: s.maskParams,
+      rightClick: s.rightClick, favBrushes: s.favBrushes, lastPaper: s.lastPaper, harmony: s.harmony, smartAI: s.smartAI, aiModel: s.aiModel, aiRemember: s.aiRemember, aiClean: s.aiClean, toolboxMode: s.toolboxMode, toolboxCols: s.toolboxCols, toolboxPos: s.toolboxPos, dockCols: s.dockCols, dockLayout: s.dockLayout, smartFilter: s.smartFilter, strokePressure: s.strokePressure, showTimeline: s.showTimeline, aiUpscaler: s.aiUpscaler, predictPoints: s.predictPoints, proofView: s.proofView, gamutWarn: s.gamutWarn, pdfDpi: s.pdfDpi, newDepth: s.newDepth, pressureOn: s.pressureOn, pressureSens: s.pressureSens, airMode: s.airMode, airSize: s.airSize, airAll: s.airAll, airNewLayer: s.airNewLayer, airAuto: s.airAuto, aiInpaint: s.aiInpaint, aiInpaintAsk: s.aiInpaintAsk, aiUpscaleAsk: s.aiUpscaleAsk, gpuBlend: s.gpuBlend, gpuAdjust: s.gpuAdjust, gpuAI: s.gpuAI, gpuFx: s.gpuFx, lockToolbox: s.lockToolbox, lockPanels: s.lockPanels, lang: s.lang, cmMode: s.cmMode, cmAll: s.cmAll, cmNewLayer: s.cmNewLayer, fsRadius: s.fsRadius, prefsRev: s.prefsRev, recentCommands: s.recentCommands, maskView: s.maskView, maskParams: s.maskParams,
     });
-  }, 600);
+  };
+  App.savePrefsSoon = U.debounce(() => App.savePrefs(), 600);
   App.loadPrefs = function () {
     const p = ND.Store.prefs(), s = this.state;
     if (p.brush) s.brush = ND.Brush.normalise(p.brush);
-    ['brushName', 'fg', 'bg', 'recent', 'eraserSize', 'toolSettings', 'stamp', 'stampSize', 'stampMode', 'stampRandom', 'fillPattern', 'gradType', 'gradTo', 'dockWidth', 'collapsed', 'gridSize', 'shapeFill', 'shapeStroke', 'shapeWidth', 'lineUseBrush', 'touchMode', 'healSize', 'liqSize', 'liqStrength', 'liqMode', 'fillGap', 'rulers', 'rightClick', 'favBrushes', 'lastPaper', 'harmony', 'smartAI', 'aiModel', 'aiRemember', 'aiClean', 'toolboxMode', 'toolboxCols', 'toolboxPos', 'dockCols', 'dockLayout', 'smartFilter', 'strokePressure', 'showTimeline', 'aiUpscaler', 'predictPoints', 'proofView', 'gamutWarn', 'pdfDpi', 'newDepth', 'pressureOn', 'pressureSens', 'airMode', 'airSize', 'airAll', 'airNewLayer', 'airAuto', 'aiInpaint', 'recentCommands', 'maskView', 'maskParams'].forEach((k) => { if (p[k] != null) s[k] = p[k]; });
+    ['brushName', 'fg', 'bg', 'recent', 'eraserSize', 'toolSettings', 'stamp', 'stampSize', 'stampMode', 'stampRandom', 'fillPattern', 'gradType', 'gradTo', 'dockWidth', 'collapsed', 'gridSize', 'shapeFill', 'shapeStroke', 'shapeWidth', 'lineUseBrush', 'touchMode', 'healSize', 'liqSize', 'liqStrength', 'liqMode', 'fillGap', 'rulers', 'rightClick', 'favBrushes', 'lastPaper', 'harmony', 'smartAI', 'aiModel', 'aiRemember', 'aiClean', 'toolboxMode', 'toolboxCols', 'toolboxPos', 'dockCols', 'dockLayout', 'smartFilter', 'strokePressure', 'showTimeline', 'aiUpscaler', 'predictPoints', 'proofView', 'gamutWarn', 'pdfDpi', 'newDepth', 'pressureOn', 'pressureSens', 'airMode', 'airSize', 'airAll', 'airNewLayer', 'airAuto', 'aiInpaint', 'aiInpaintAsk', 'aiUpscaleAsk', 'gpuBlend', 'gpuAdjust', 'gpuAI', 'gpuFx', 'lockToolbox', 'lockPanels', 'lang', 'cmMode', 'cmAll', 'cmNewLayer', 'fsRadius', 'recentCommands', 'maskView', 'maskParams'].forEach((k) => { if (p[k] != null) s[k] = p[k]; });
     if (p.text) Object.assign(s.text, p.text);
     // 2.6.1 changed two defaults: rulers on, pen prediction off — apply them once to older settings
     if (!(p.prefsRev >= 2)) { s.rulers = true; s.predictPoints = false; }

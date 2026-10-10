@@ -1,4 +1,4 @@
-/* Neon Draw — document tabs in the top bar: click to switch, double-click to rename, × or middle-click to close,
+/* Neon Sparks Draw — document tabs in the top bar: click to switch, double-click to rename, × or middle-click to close,
  * + for a new document, drag to reorder. */
 'use strict';
 (function () {

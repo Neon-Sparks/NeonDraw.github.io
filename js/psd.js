@@ -1,4 +1,4 @@
-/* Neon Draw — Photoshop (.psd / .psb) reader.
+/* Neon Sparks Draw — Photoshop (.psd / .psb) reader.
  * Imports pixel layers, groups, layer masks, blend modes, opacity, visibility and clipping.
  * Supports RGB, greyscale and CMYK at 8 or 16 bits, with raw, RLE or ZIP compression.
  * Adjustment / smart-object layers come in as their pixels (or are skipped when they have none). */
@@ -6,7 +6,7 @@
 (function () {
   const U = ND.U;
   const BLEND = {
-    norm: 'normal', pass: 'normal', 'mul ': 'multiply', scrn: 'screen', over: 'overlay', dark: 'darken', lite: 'lighten', 'div ': 'dodge', idiv: 'burn',
+    norm: 'normal', pass: 'passthrough', 'mul ': 'multiply', scrn: 'screen', over: 'overlay', dark: 'darken', lite: 'lighten', 'div ': 'dodge', idiv: 'burn',
     lbrn: 'linearburn', lddg: 'add', hLit: 'hardlight', sLit: 'softlight', diff: 'difference', smud: 'exclusion', fsub: 'subtract', fdiv: 'divide',
     vLit: 'vividlight', lLit: 'linearlight', pLit: 'pinlight', hMix: 'hardmix', 'hue ': 'hue', 'sat ': 'saturation', colr: 'color', 'lum ': 'luminosity',
     dkCl: 'darkercolor', lgCl: 'lightercolor', diss: 'normal',
@@ -65,14 +65,27 @@
     } else throw new Error('Unknown PSD compression ' + comp);
     r.p = start + len;
     if (bpc === 1) return raw.length === n ? raw : raw.subarray(0, n);
+    if (keep16) { const o16 = new Uint16Array(n); for (let i = 0; i < n; i++) o16[i] = (raw[i * 2] << 8) | raw[i * 2 + 1]; return o16; } // full 16 bits
     const out = new Uint8Array(n);
     for (let i = 0; i < n; i++) out[i] = raw[i * 2];
     return out;
   }
 
+  let keep16 = false;
   function toImageData(ch, w, h, mode) {
-    const img = new ImageData(Math.max(1, w), Math.max(1, h)), d = img.data, n = w * h;
-    const A = ch[-1];
+    const A = ch[-1], n = w * h;
+    if ([ch[0], ch[1], ch[2], A].some((c) => c instanceof Uint16Array)) {
+      // 16-bit: float pixels for a 16-bit document
+      const f = new Float16Array(Math.max(1, n) * 4), v = (c, i, def) => (c ? c[i] / 65535 : def); // eslint-disable-line no-undef
+      for (let i = 0, j = 0; i < n; i++, j += 4) {
+        if (mode === 1) { f[j] = f[j + 1] = f[j + 2] = v(ch[0], i, 0); }
+        else if (mode === 4) { const k = v(ch[3], i, 1); f[j] = v(ch[0], i, 1) * k; f[j + 1] = v(ch[1], i, 1) * k; f[j + 2] = v(ch[2], i, 1) * k; }
+        else { f[j] = v(ch[0], i, 0); f[j + 1] = v(ch[1], i, 0); f[j + 2] = v(ch[2], i, 0); }
+        f[j + 3] = v(A, i, 1);
+      }
+      return new ImageData(f, Math.max(1, w), Math.max(1, h), { pixelFormat: 'rgba-float16' });
+    }
+    const img = new ImageData(Math.max(1, w), Math.max(1, h)), d = img.data;
     for (let i = 0, j = 0; i < n; i++, j += 4) {
       if (mode === 1) { const g = ch[0] ? ch[0][i] : 0; d[j] = d[j + 1] = d[j + 2] = g; }
       else if (mode === 4) {
@@ -96,7 +109,10 @@
     r.skip32(); // colour mode data
     r.skip32(); // image resources
     const lmLen = psb ? r.u64() : r.u32(), lmEnd = r.p + lmLen;
+    keep16 = depth === 16 && !!ND.Deep && ND.Deep.supported();
+    if (ND.Deep) ND.Deep.use(keep16 ? 16 : 8);
     const doc = new ND.Doc(W, H, null);
+    doc.depth = keep16 ? 16 : 8;
     doc.name = (name || 'Untitled').replace(/\.[^.]+$/, '');
     doc.root.children = [];
     let skipped = 0, imported = 0;
@@ -139,6 +155,7 @@
             if (c.id === -2 && rec.mask) {
               const mw = rec.mask.right - rec.mask.left, mh = rec.mask.bottom - rec.mask.top;
               rec.maskData = mw > 0 && mh > 0 ? await readChannel(r, mw, mh, depth, psb, c.len) : (r.p += c.len, null);
+              if (rec.maskData instanceof Uint16Array) rec.maskData = Uint8Array.from(rec.maskData, (q) => q >> 8);
             } else if (c.id < -2 || w <= 0 || h <= 0) r.p += c.len;
             else chans[c.id] = await readChannel(r, w, h, depth, psb, c.len);
           }
@@ -165,6 +182,7 @@
           }
           node.opacity = rec.opacity;
           node.blendMode = BLEND[rec.section ? rec.sectionBlend || rec.blend : rec.blend] || 'normal';
+          if (node.blendMode === 'passthrough' && !node.isGroup) node.blendMode = 'normal'; // only groups pass through
           node.visible = !(rec.flags & 2);
           node.clip = rec.clip;
           if (rec.mask && rec.maskData) {

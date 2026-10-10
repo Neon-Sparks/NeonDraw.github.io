@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bundle Neon Draw into one self-contained HTML file (dist/neon-draw.html).
+"""Bundle Neon Sparks Draw into one self-contained HTML file (dist/neon-sparks-draw.html).
 
 The multi-file app already runs from disk and from any web host; this is only for
 when you want a single file to e-mail or drop somewhere. No dependencies needed.
@@ -41,7 +41,7 @@ def main():
     html = re.sub(r'<script src="([^"]+)"></script>', js, html)
     out_dir = os.path.join(ROOT, 'dist')
     os.makedirs(out_dir, exist_ok=True)
-    out = os.path.join(out_dir, 'neon-draw.html')
+    out = os.path.join(out_dir, 'neon-sparks-draw.html')
     with open(out, 'w', encoding='utf-8', newline='\n') as f:
         f.write(html)
     print('wrote', out, round(os.path.getsize(out) / 1024), 'KB')

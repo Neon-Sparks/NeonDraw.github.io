@@ -1,5 +1,108 @@
 # Changelog
 
+## 3.6.0 — imported brushes behave like the originals
+
+Imported Photoshop and Krita brushes were missing several of their settings, partly because the brush engine had no place to put them. Now:
+
+- **New brush settings** (Brush settings ▸ Pressure & dynamics, for every brush):
+  - **Pressure → flow** — light pressure lays down less paint per dab (Photoshop's "Transfer"), separate from pressure → opacity.
+  - **Each option's own pressure curve** for size, opacity and flow — Krita brushes bring theirs (e.g. Basic-5 reaches full flow almost at once). A note shows when a brush has them; **Use my curve** switches back to the curve editor above.
+  - **Roundness jitter** (with a minimum roundness), **Count** (several dabs per step) and **Scatter direction** (both ways, or across the stroke as in Photoshop).
+- **Photoshop .abr** now also brings: pressure → flow (27 of 37 brushes in the test set), scatter — which was never imported before because of a mistake — with its direction and count, roundness jitter, angle following the stroke direction or pen tilt, the dual brush (second tip) and build-up (airbrush).
+- **Krita** now also brings: the real pressure curves for size (59 presets), opacity (63) and flow (16) — Krita's opacity and flow are always on, so 20 opacity and all flow settings were missed before — rotation following the drawing direction, pen tilt or random, random size/opacity, speed → size, scatter amount and axes, airbrush mode, and the smearing strength of smudge brushes only.
+- **Tips with several images** (Krita/GIMP .gih, e.g. Krita's graphite pencils) keep every image; each dab picks one, as in Krita. 30 of the 77 tips in Krita's default set have several.
+- Brushes imported with 3.5.0 keep their old settings: remove the set and import it again to get all of this.
+
+## 3.5.0 — import brushes from Photoshop, Krita and GIMP
+
+- **Options ▸ Brushes ▸ Import brushes…** (also the **Import** button under Brush presets) reads:
+  - **Photoshop .abr** — old (versions 1–2) and current (6–10) files: the brush tips, plus each brush's name, size, spacing, angle, roundness, hardness and the main pen-pressure / jitter settings.
+  - **Krita .kpp** presets and **.bundle** files — presets with their tips (Krita's .gbr / .gih / .png tips inside the bundle), size, spacing, angle, roundness, softness, opacity, flow, pressure, eraser presets; tips in a bundle that no preset uses become brushes too.
+  - **GIMP / Krita .gbr and .gih** tips and plain **.png** tips; several files at once.
+  - Each file becomes its own **set** — a category in Brush presets — with a **Remove this set** button (also in Options ▸ Brushes). Brush tips are kept in the browser's database, so large sets fit.
+  - Krita engines that don't exist here (deform, grid, particle, curve, filter…) are imported as the closest brush, with a note; colour-smudge brushes become the colour mixer. Brush textures/patterns and Photoshop's dual-brush and colour dynamics are not carried over.
+  - Checked with real files: a Photoshop 6.2 brush set (37 brushes), Krita's full default resource bundle (144 brushes, 77 tips) and Krita's test brushes.
+- Fix: a brush whose tip is missing now paints with a round tip instead of failing.
+
+## 3.4.0 — new name: Neon Sparks Draw
+
+- **The app is now called Neon Sparks Draw** (formerly Neon Draw — another app already uses that name). The new name is shown in the top bar, the browser tab, Help and About, the install prompts, the installed app (short name "Neon Sparks"), all 10 translations, the README and the deployment guide. Older entries below have been updated to the new name too.
+- Nothing you made is affected: your settings, brushes, palettes, autosave and downloaded AI models are kept, `.ndraw` projects open as before (the file type and its extension stay the same), and an installed copy updates in place (it may ask once to confirm the new name).
+- The single-file version is now `dist/neon-sparks-draw.html`; exported brushes are saved as `neon-sparks-draw-brushes.json`.
+- DEPLOY.md explains what happens if you also rename the GitHub repository (the web address changes, so browser-saved things start fresh — renaming isn't needed for the new name to show).
+
+## 3.3.0 — Pass Through groups, Channels, correct group export
+
+- **Pass Through blend mode for groups** (the group's blend list, at the top). The layers inside blend straight onto what is below the group — a Multiply layer in a Pass Through group darkens the picture under the group, and an adjustment layer inside it changes the layers below too. The group's opacity and mask fade between "without the group" and "with it", as in Photoshop. Other groups stay isolated (flattened first, then blended) as before, so existing documents look the same.
+  - A Pass Through group with a layer style or clipped layers on top is drawn isolated (it needs one flat picture of its own for those).
+- **Group export fixed.** Krita files wrote every Normal group as pass-through and Photoshop files wrote them as "pass", so a file could look different in Krita/Photoshop than in Neon Sparks Draw. Now isolated groups are written as isolated (Krita `passthrough="0"`, Photoshop `norm`, OpenRaster `isolation="isolate"`) and only Pass Through groups as pass-through. Opening files works the other way round, so Photoshop files with pass-through groups (Photoshop's default) now look as they do in Photoshop.
+- **Channels tab** (next to Layers):
+  - **RGB / Red / Green / Blue.** Click a channel to paint on it alone — brushes, fills, gradients, filters, healing and content-aware fill change only that channel of the active layer, the others stay exactly as they were (also while the stroke is being drawn). Shift+click adds or removes channels; the eye shows or hides them (one channel alone is shown in greyscale); RGB goes back to normal. Thumbnails show each channel.
+  - **Alpha channels** (saved selections): Save selection keeps the selection in the document (saved in .ndraw projects and autosave). Load it again (Shift adds, Alt subtracts, Shift+Alt intersects; Ctrl+click the row also loads it), **Paint on it** like a quick mask (white = selected, black = not; Q or Done finishes, your selection is left alone), rename (double-click) or delete. Undo works for all of it.
+  - Not yet: alpha channels are not written into PSD/Krita files.
+- All new text is translated into the 10 languages.
+
+## 3.2.0 — fast layer styles, graphics card for heavy work, frequency separation sets up your tools
+
+- **Layer styles (fx) no longer slow everything down.**
+  - A layer with a style that you're not working on is kept finished: adjusting other layers, adjustment layers or painting elsewhere no longer redoes the style. Measured on a 1920 × 1080 picture with all six styles on: adjusting a Curves layer went from 642 ms to 78 ms per redraw, painting on another layer from 604 ms to 74 ms — the same as with no style at all.
+  - Styles are worked out only in the box around the layer's content (plus how far the style reaches), not over the whole picture — much less work for text and logos.
+  - Filter layers (editable filters) above layers that haven't changed are also kept, instead of being redone each time.
+- **Layer styles and blurs on the graphics card (WebGL 2).** Drop shadow, outer glow, stroke, inner shadow, bevel and colour overlay run on the graphics card in a few passes (true Gaussian blurs; strokes and glow spread use an exact distance map). The blur used by filters, frequency separation, skin smoothing and high-pass also runs there. They look the same as before (checked by tests: on average under 1 level of difference per style).
+  - New switch: Options ▸ Graphics card ▸ **Use the graphics card for layer styles and blurs** (on by default).
+  - Some computers have a very slow or emulated graphics chip; the app times one small test the first time and, if the processor is quicker, keeps using the processor (Options ▸ Graphics card status… says so).
+- **Frequency separation now sets up your tools.** After it runs, the **Low** layer is selected with a **soft brush at 20%** sized to the picture, the colour is set to the picture's typical tone, and **each stroke picks up the colour under the brush** — so you always paint with the right skin tone wherever you start. New buttons in the Retouch panel switch between **Colour & tone (Low)** and **Texture (High)** (the High layer with the spot healing brush, using only its own texture).
+  - The per-stroke colour pickup is a tick box in the brush options, **Pick colour each stroke**; it belongs to the layer (on for Low layers, off elsewhere) and is saved with the project.
+- All the new text is translated into the 10 languages.
+
+## 3.1.0 — whole interface in 11 languages, Gradients / Retouch / Actions panels, Ctrl+drag softness
+
+- **The whole interface is now translated**, not just the menus: panel titles and buttons, slider names, tooltips, tool hints, the top tool-options bar, brush settings, blend modes, the New document sizes and papers, dialogs and messages — about 1,200 phrases in each of Français, Español, Deutsch, Italiano, Polski, Português, 中文, 日本語, 한국어 and Filipino (Options ▸ Language). It switches straight away, and back to English too.
+  - Names you type yourself — layers, paths, documents — are never changed. Brush, stamp and pattern names stay as they are.
+  - Keyboard names follow each language where that is usual (Maj, Strg, Entrée…).
+- **Gradients panel** (right-hand panels): pick a gradient, choose linear / radial / angle / diamond / reflected, reverse, repeat, dither and opacity, open the gradient editor, or add a **gradient fill layer** or **gradient map** with one click. The gradient tool (G) uses what you pick here.
+- **Retouch panel**: all the retouch tools in one place (spot heal, patch, clone, red-eye, AI remove, content-aware move, dodge, burn, smudge, liquify) plus one-click helpers:
+  - **Frequency separation** — splits the picture into a *Low* layer (colour & tone) and a *High* layer (texture) in a group; together they look exactly like the original (checked by a test: at most 1 level of difference). Separation radius slider.
+  - **Smooth skin** (frequency separation with the colour layer softened), **Dodge & burn layer** (50% grey Overlay), **High-pass sharpen**, **Remove background (AI)**, **Content-aware fill**.
+- **Actions panel**: press **Record**, do some steps — filters (with their settings), adjustment layers (with their final settings), image size / canvas size / crop / flip / rotate, retouch helpers and other menu commands — then **Stop**. **Play** repeats them on any picture; **Batch…** plays them on many files and saves the results as one zip. Brush strokes are not recorded. Actions are kept in this browser.
+- **Ctrl+drag sideways on the canvas changes brush softness** (with a live preview of the edge), and there is a **Softness** slider next to Size in the top bar. A plain Ctrl+click (or Alt+click) still picks a colour; Shift+drag still changes the size.
+- The new panels sit at the end of the right-hand panels and start folded; click a title to open it. Existing panel layouts are kept.
+- Fix: several highlighted buttons (e.g. **Place** for text, **Remove** in AI remove, the main buttons in the Adjustments and AI panels and the timeline) were shown as plain text instead of buttons. They work and look like buttons again.
+- Fix: frequency separation and high-pass no longer fade at the picture's edges.
+
+## 3.0.1 — language fix
+
+- **Options ▸ Language now works.** Picking a language did nothing because the setting couldn't be saved (an internal "save settings now" step was missing). The menus now change straight away — no reload — and the choice is remembered next time.
+- The same missing step stopped **Options ▸ Workspace** layouts (switch / reset) from working; fixed too.
+
+## 3.0.0 — 16-bit everywhere, AI canvas extension, content-aware move, 11 languages
+
+- **16-bit is finished.**
+  - **Adjustment layers** in 16-bit documents are worked out at full precision: point adjustments (Levels, Curves, Hue/Saturation…) use a smooth 3D colour table on the high-precision pixels, the photo Develop adjustment runs on them directly. A strong Levels stretch of a very dark gradient now gives smooth tones instead of a few bands.
+  - **Filters** keep 16 bits: colour filters through the same smooth colour table, the others (sharpen, blur, noise…) on high-precision numbers; if a filter can't handle that it quietly falls back to the normal way.
+  - **Photoshop .psd**: 16-bit files open as 16-bit documents with every tone kept, and 16-bit documents export 16-bit PSDs.
+  - **Krita .kra**: 16-bit (RGBA16) files open as 16-bit documents, and 16-bit documents save as 16-bit Krita files.
+- **Extend canvas with AI** (Image menu): make the picture a new shape (1:1, 4:5, 9:16, 16:9, 3:2, 2:3), add a border on each side, or type a size, choose where the picture stays, and the AI fills the new edges piece by piece — nearest the picture first, with everything not yet filled treated as unknown. The result is on its own “AI extend” layer. Works with MI-GAN (fast) or LaMa (best for big extensions). Progress and Cancel while it works.
+- **Content-aware move tool** (left toolbox, Retouch group): select something, then drag it with the tool — it moves there with a soft edge and the AI fills the hole it left. **Duplicate** mode copies it instead (no AI needed). Result on its own layer by default; “Sample all layers” uses everything you see.
+- **Menus in 11 languages**: English (default), Français, Español, Deutsch, Italiano, Polski, Português, 中文, 日本語, 한국어 and Filipino — Options ▸ Language. All menu entries, filter names and adjustment names are translated; the command palette (Ctrl+K) finds commands by their translated or English name.
+- **AI fixes**: if a graphics card returns a broken result for AI remove / extend / move (some drivers do so without an error), it is detected and redone on the CPU automatically.
+- Fix: Krita files written by 2.9 had a typing error in their header that made them unreadable.
+
+## 2.9.0 — faster adjustments, Options menu, workspaces, locks, document sizes
+
+- **Much less lag with adjustment layers.**
+  - Adjustments that change each pixel on its own (Levels, Curves, Hue/Saturation, Brightness/Contrast, Colour Balance, Vibrance, Black & White, Gradient Map, Selective Colour, Photo Filter, Exposure, Invert, Threshold, Posterize…) now run on the graphics card as a 33 × 33 × 33 colour table, worked out once per setting change.
+  - While you drag an adjustment layer's sliders, everything below it is kept from the last redraw, so only that layer and the ones above are redone.
+  - Together about 2.5× faster even on a computer without a real graphics card; much more with one. Results match the old way (checked by a test).
+- **Options menu** (next to Help):
+  - **AI:** choose the model for Remove background, Enlarge and AI remove — or "ask each time" — and open the AI models manager.
+  - **Graphics card:** turn the graphics card on or off for adjustment layers, special blend modes and AI, and **Graphics card status…** shows whether your browser is really using it (with how to switch on Chrome's graphics acceleration if not).
+  - **Workspace:** **Save workspace layout…** (tool panel position and columns, right-panel arrangement and width, collapsed panels, timeline, rulers), switch between saved layouts, delete them, or reset to the default layout.
+  - **Pen:** pressure on/off and pen prediction.
+- **Lock buttons** on the tool panel's top bar and on every right-hand panel title stop them being dragged by accident (also in Options ▸ Workspace). The lock is remembered.
+- **New document sizes:** the six most used sizes are buttons; a dropdown has 76 more, grouped — Instagram, TikTok & Snapchat, YouTube, Facebook, X & Threads, LinkedIn, Pinterest, Twitch & Discord, print sizes at 300 ppi, comics & books, screens & wallpapers, video, games & textures, pixel art. Picking one also names the document.
+- **Shift+drag sideways resizes the brush** for every brush-type tool, even on a layer you can't paint on; the circle now stays where you started and shows the size in pixels (Shift+click still draws a straight line from the last stroke).
+
 ## 2.8.0 — 16-bit editing, AI remove, pressure controls
 
 - **16-bit documents.** File ▸ New has a Colour depth choice (8-bit / 16-bit), and Image ▸ Mode converts an open document (undoable). In 16-bit documents every layer, mask and work buffer keeps 16-bit precision, so dark gradients, soft brushes, glazes and heavy opacity work stay smooth instead of banding. Projects and autosave store the 16 bits losslessly (compressed). 16-bit TIFFs open as 16-bit documents; Export PNG and Export TIFF save 16 bits per channel. The tab shows “16-bit”. Needs Chrome or Edge (other browsers keep 8-bit). Filters and adjustment layers still calculate at 8-bit precision.
@@ -84,7 +187,7 @@
 ## 2.5.2 — ISNet fix
 
 - **Fixed: ISNet stopped with "ceil_mode … not yet implemented in the WebGPU MaxPool kernel".** One of ISNet's layers (pooling with "ceil mode") isn't supported by the graphics-card (WebGPU) engine yet, so ISNet now always runs on the CPU, which supports it. Expect about 10–40 seconds per picture; the model card says so.
-- **Safety net for every model:** if a model hits anything the graphics-card engine can't run, Neon Draw re-runs it on the CPU straight away instead of showing an error, and remembers to use the CPU for that model from then on.
+- **Safety net for every model:** if a model hits anything the graphics-card engine can't run, Neon Sparks Draw re-runs it on the CPU straight away instead of showing an error, and remembers to use the CPU for that model from then on.
 
 ## 2.5.1 — tool panel layout, Hide panels fix
 
@@ -198,7 +301,7 @@
 - **Quick select tool (A):** paint over an object and the selection snaps to its outline; keep painting to add, hold Alt (or pick *Subtract*) to remove. Sample the active layer or all layers.
 - **Select ▸ Select subject:** finds the main object in one click.
 - **Layer ▸ Remove background (as mask):** hides the background of the active layer with a layer mask, so nothing is lost. Paint white on the mask to bring parts back and black to hide more.
-- **Installable app (PWA):** an **Install app** button, its own window and icon, works offline, opens `.ndraw`/`.psd`/`.ora`/image files from the desktop, and shows an **Update ready** button when a new version is uploaded (your work is autosaved first). Help ▸ *Install Neon Draw as an app* explains how on each browser.
+- **Installable app (PWA):** an **Install app** button, its own window and icon, works offline, opens `.ndraw`/`.psd`/`.ora`/image files from the desktop, and shows an **Update ready** button when a new version is uploaded (your work is autosaved first). Help ▸ *Install Neon Sparks Draw as an app* explains how on each browser.
 - New app icon.
 
 ### Faster on big canvases

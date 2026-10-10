@@ -1,4 +1,4 @@
-/* Neon Draw — menu bar. */
+/* Neon Sparks Draw — menu bar. */
 'use strict';
 (function () {
   const U = ND.U, h = U.h, App = ND.App;
@@ -71,6 +71,7 @@
     Image: [
       { label: 'Scale image…', run: () => D().scaleImage() },
       { label: 'Enlarge with AI (2× / 4×)…', run: () => App.aiUpscale() },
+      { label: 'Extend canvas with AI…', run: () => App.aiExtendDialog() },
       { label: 'Mode: 8 bits per channel', check: () => (doc().depth || 8) === 8, run: () => { const m = ND.Deep.convert(doc(), 8); App.toast(m || 'Converted to 8 bits per channel'); App.emit('tabs'); } },
       { label: 'Mode: 16 bits per channel', check: () => doc().depth === 16, run: () => { const m = ND.Deep.convert(doc(), 16); App.toast(m || 'Converted to 16 bits per channel — smoother tones from now on (existing pixels keep their 8-bit values)', 5000); App.emit('tabs'); } },
       { label: 'Canvas size…', run: () => D().canvasSize() },
@@ -227,12 +228,47 @@
       { label: 'Touch always paints', check: () => App.state.touchMode === 'paint', run: () => App.set('touchMode', 'paint') },
       { label: 'Touch only pans & zooms', check: () => App.state.touchMode === 'pan', run: () => App.set('touchMode', 'pan') },
     ],
+    Options: () => {
+      const s = App.state, O = ND.Options, AI = ND.AI, ws = Object.keys(O.workspaces());
+      const pick = (label, cur, val, run) => ({ label, check: () => cur() === val, run });
+      return [
+        { head: 'AI — which model to use' },
+        pick('Remove background: ask each time', O.bgModel, 'ask', () => O.setBgModel('ask')),
+        ...AI.ORDER.map((id) => pick('Remove background: ' + AI.MODELS[id].name + ' (' + AI.MODELS[id].title + ')', O.bgModel, id, () => O.setBgModel(id))),
+        pick('Enlarge: ask each time', () => (s.aiUpscaleAsk !== false ? 'ask' : s.aiUpscaler), 'ask', () => App.set('aiUpscaleAsk', true)),
+        ...AI.UPSCALERS.map((id) => pick('Enlarge: ' + AI.MODELS[id].name, () => (s.aiUpscaleAsk !== false ? 'ask' : s.aiUpscaler), id, () => { App.set('aiUpscaler', id); App.set('aiUpscaleAsk', false); })),
+        pick('AI remove: ask each time', () => (s.aiInpaintAsk ? 'ask' : s.aiInpaint), 'ask', () => App.set('aiInpaintAsk', true)),
+        ...AI.INPAINT.map((id) => pick('AI remove: ' + AI.MODELS[id].name + ' (' + AI.MODELS[id].title + ')', () => (s.aiInpaintAsk ? 'ask' : s.aiInpaint), id, () => { App.set('aiInpaint', id); App.set('aiInpaintAsk', false); })),
+        { label: 'AI models manager (download / delete)…', run: () => ND.AIUI.manager() },
+        { head: 'Brushes' },
+        { label: 'Import brushes (Photoshop .abr, Krita .kpp / .bundle, GIMP .gbr / .gih)…', run: () => App.chooseBrushFiles() },
+        ...App.brushSets().map((set) => ({ label: 'Remove brush set: ' + set, run: () => { if (window.confirm('Remove the brush set “' + set + '” and its tips?')) App.deleteBrushSet(set); } })),
+        { head: 'Graphics card (GPU)' },
+        { label: 'Use the graphics card for adjustment layers (less lag)', check: () => s.gpuAdjust !== false, run: () => { App.set('gpuAdjust', s.gpuAdjust === false); O.applyGPU(); } },
+        { label: 'Use the graphics card for layer styles and blurs', check: () => s.gpuFx !== false, run: () => { App.set('gpuFx', s.gpuFx === false); O.applyGPU(); } },
+        { label: 'Use the graphics card for special blend modes', check: () => s.gpuBlend !== false, run: () => { App.set('gpuBlend', s.gpuBlend === false); O.applyGPU(); } },
+        { label: 'Use the graphics card for AI (WebGPU)', check: () => s.gpuAI !== false, run: () => { App.set('gpuAI', s.gpuAI === false); O.applyGPU(); } },
+        { label: 'Graphics card status…', run: () => O.gpuStatus() },
+        { head: 'Workspace' },
+        { label: 'Lock the tool panel (no accidental dragging)', check: () => !!s.lockToolbox, run: () => { App.set('lockToolbox', !s.lockToolbox); App.emit('locks'); } },
+        { label: 'Lock the right-hand panels', check: () => !!s.lockPanels, run: () => { App.set('lockPanels', !s.lockPanels); App.emit('locks'); } },
+        { label: 'Save workspace layout…', run: () => O.saveWorkspace() },
+        ...ws.map((n) => ({ label: 'Layout: ' + n, run: () => O.loadWorkspace(n) })),
+        ws.length ? { label: 'Delete a saved layout…', run: () => O.deleteWorkspace() } : null,
+        { label: 'Reset to the default layout', run: () => O.resetLayout() },
+        { head: 'Language' },
+        ...Object.keys(ND.Lang.NAMES).map((code) => ({ label: ND.Lang.NAMES[code], check: () => (s.lang || 'en') === code, run: () => O.setLanguage(code) })),
+        { head: 'Pen' },
+        { label: 'Use pen pressure', check: () => s.pressureOn !== false, run: () => App.set('pressureOn', s.pressureOn === false) },
+        { label: 'Predict pen movement (less lag)', check: () => s.predictPoints === true, run: () => App.set('predictPoints', !s.predictPoints) },
+      ].filter(Boolean);
+    },
     Help: [
       { label: 'Shortcuts & tips', key: 'F1', run: () => D().help() },
       { label: 'Command palette…', key: 'Ctrl+K', run: () => ND.Command.open() },
       { label: 'AI models (download & manage)…', run: () => ND.AIUI.manager() },
-      { label: 'Install Neon Draw as an app…', run: () => App.pwa.install() },
-      { label: 'About Neon Draw', run: () => D().about() },
+      { label: 'Install Neon Sparks Draw as an app…', run: () => App.pwa.install() },
+      { label: 'About Neon Sparks Draw', run: () => D().about() },
     ],
   });
   M.toggleWrap = function () {
@@ -249,6 +285,8 @@
   };
   M.fullscreen = function () { if (document.fullscreenElement) document.exitFullscreen(); else if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen(); };
 
+  // after a language change: new names on the menu bar (menu entries are translated each time they open)
+  M.relabel = () => document.querySelectorAll('.nd-menu-btn[data-menu]').forEach((b) => { b.textContent = ND.Lang ? ND.Lang.t(b.dataset.menu) : b.dataset.menu; });
   M.build = function (bar) {
     let open = null;
     const close = () => { if (open) { open.menu.remove(); open.btn.classList.remove('open'); open = null; } };
@@ -258,10 +296,10 @@
       const menu = h('div.nd-menu');
       items.forEach((it) => {
         if (it.sep) { menu.appendChild(h('div.nd-menu-sep')); return; }
-        if (it.head) { menu.appendChild(h('div.nd-menu-head', it.head)); return; }
+        if (it.head) { menu.appendChild(h('div.nd-menu-head', ND.Lang ? ND.Lang.t(it.head) : it.head)); return; }
         const chk = it.check ? (it.check() ? '✓' : '') : null;
-        const b = h('button.nd-menu-item', { type: 'button' }, h('span.nd-menu-chk', chk == null ? '' : chk), h('span.nd-menu-label', it.label), it.key ? h('span.nd-shortcut', it.key) : null);
-        b.addEventListener('click', (e) => { e.stopPropagation(); close(); if (App.doc || name === 'File' || name === 'Help') it.run(); });
+        const b = h('button.nd-menu-item', { type: 'button' }, h('span.nd-menu-chk', chk == null ? '' : chk), h('span.nd-menu-label', ND.Lang ? ND.Lang.t(it.label) : it.label), it.key ? h('span.nd-shortcut', it.key) : null);
+        b.addEventListener('click', (e) => { e.stopPropagation(); close(); if (App.doc || name === 'File' || name === 'Help') { if (ND.Actions) ND.Actions.wrapRun(name, it); else it.run(); } });
         menu.appendChild(b);
       });
       btn.parentNode.appendChild(menu);
@@ -273,7 +311,7 @@
       open = { menu, btn, name };
     };
     Object.keys(M.menus()).forEach((name) => {
-      const btn = h('button.nd-menu-btn', { type: 'button' }, name);
+      const btn = h('button.nd-menu-btn', { type: 'button', 'data-menu': name }, ND.Lang ? ND.Lang.t(name) : name);
       btn.addEventListener('click', (e) => { e.stopPropagation(); if (open && open.name === name) close(); else show(name, btn); });
       btn.addEventListener('pointerenter', () => { if (open && open.name !== name) show(name, btn); });
       bar.appendChild(btn);

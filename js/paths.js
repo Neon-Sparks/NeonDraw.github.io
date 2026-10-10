@@ -1,4 +1,4 @@
-/* Neon Draw — Bézier paths: geometry, drawing, sampling, hit-testing and editing helpers.
+/* Neon Sparks Draw — Bézier paths: geometry, drawing, sampling, hit-testing and editing helpers.
  * A path: { id, name, closed, nodes: [{ x, y, ix, iy, ox, oy, smooth }] }
  *   (ix, iy) = handle coming into the node, (ox, oy) = handle going out (both absolute positions). */
 'use strict';

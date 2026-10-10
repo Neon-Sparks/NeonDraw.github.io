@@ -1,4 +1,4 @@
-/* Neon Draw — pattern library.
+/* Neon Sparks Draw — pattern library.
  *  SPRITES: scatter brushes — little images sprayed along the stroke (leaves, stars, confetti…).
  *  TILES:   seamless repeating patterns — painted through the brush mask, used by the fill tool,
  *           Edit ▸ Fill with Pattern and the brush "texture fill" option.

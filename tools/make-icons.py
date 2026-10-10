@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Draw the Neon Draw app icons (needs Pillow: pip install pillow).
+"""Draw the Neon Sparks Draw app icons (needs Pillow: pip install pillow).
 
     python tools/make-icons.py
 """

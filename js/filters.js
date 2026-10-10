@@ -1,4 +1,4 @@
-/* Neon Draw — filters. Each filter works on ImageData (px) or returns a canvas (cv). */
+/* Neon Sparks Draw — filters. Each filter works on ImageData (px) or returns a canvas (cv). */
 'use strict';
 (function () {
   const U = ND.U;
@@ -48,6 +48,8 @@
   function blurCanvas(src, radius) {
     const c = U.canvas(src.width, src.height), x = U.ctx(c);
     if (radius <= 0) { x.drawImage(src, 0, 0); return c; }
+    // on the graphics card when possible (not in the background worker, which has no ND.GPUFX)
+    if (ND.GPUFX && (!ND.Doc || ND.Doc.gpuFx !== false)) { const g = ND.GPUFX.blur(src, radius); if (g) return g; }
     if (canvasFilterOK()) {
       x.filter = 'blur(' + radius + 'px)';
       x.drawImage(src, 0, 0);
@@ -459,6 +461,7 @@
     const p = {};
     f.params.forEach((q) => { p[q.key] = params && params[q.key] != null ? +params[q.key] : q.def; });
     if (f.cv) return f.cv(src, p, env || {});
+    if (ND.Deep && ND.Deep.is16 && ND.Deep.is16(src)) { const out = ND.Deep.filter16(f, src, p, env || {}); if (out) return out; } // 16-bit precision
     const c = U.clone(src), x = U.ctx(c), img = x.getImageData(0, 0, c.width, c.height);
     const res = f.px(img, p, env || {}) || img;
     x.putImageData(res, 0, 0);
@@ -466,4 +469,37 @@
   }
 
   ND.Filters = { list: F, CATS, run, blurCanvas, boxBlurRGBA, byId: (id) => F.find((f) => f.id === id), toCanvas, silhouette };
+})();
+
+/* Retouch maths shared by the Retouch panel (and the self tests): frequency separation and high-pass. */
+(function () {
+  const U = ND.U;
+  // per-pixel maths on two canvases at the precision of the picture (16-bit pictures keep 16 bits)
+  function combine(a, b, fn) {
+    const deep = ND.Deep && ND.Deep.is16(a), W = a.width, H = a.height;
+    const da = deep ? ND.Deep.read16(a).data : U.ctx(a).getImageData(0, 0, W, H).data, db = deep ? ND.Deep.read16(b).data : U.ctx(b).getImageData(0, 0, W, H).data;
+    const k = deep ? 1 : 255, out = deep ? new da.constructor(da.length) : new Uint8ClampedArray(da.length);
+    for (let i = 0; i < da.length; i += 4) { for (let c = 0; c < 3; c++) out[i + c] = fn(da[i + c] / k, db[i + c] / k) * k; out[i + 3] = da[i + 3]; }
+    const c = U.canvas(W, H);
+    U.ctx(c).putImageData(deep ? new ImageData(out, W, H, { pixelFormat: 'rgba-float16' }) : new ImageData(out, W, H), 0, 0);
+    return c;
+  }
+  // blur that repeats the edge pixels outwards first, so the picture's borders don't fade to transparent
+  function blurClamped(src, r) {
+    const W = src.width, H = src.height, p = Math.min(Math.ceil(r * 3) + 2, Math.max(W, H)), big = U.canvas(W + 2 * p, H + 2 * p), x = U.ctx(big);
+    x.imageSmoothingEnabled = false;
+    x.drawImage(src, p, p);
+    x.drawImage(src, 0, 0, W, 1, p, 0, W, p); x.drawImage(src, 0, H - 1, W, 1, p, p + H, W, p); // top, bottom
+    x.drawImage(big, p, 0, 1, H + 2 * p, 0, 0, p, H + 2 * p); x.drawImage(big, p + W - 1, 0, 1, H + 2 * p, p + W, 0, p, H + 2 * p); // left, right (with corners)
+    const b = ND.Filters.run('blur', big, { r }, {}), out = U.canvas(W, H);
+    U.ctx(out).drawImage(b, p, p, W, H, 0, 0, W, H);
+    return out;
+  }
+  // Low = colour & tone (blurred copy), High = texture. Low with High on top in Linear Light gives back the original.
+  function split(src, radius) {
+    const low = blurClamped(src, radius);
+    return { low, high: combine(src, low, (o, l) => (o - l) / 2 + 0.5) };
+  }
+  const highPass = (src, radius) => combine(src, blurClamped(src, radius), (o, l) => Math.min(1, Math.max(0, o - l + 0.5)));
+  ND.Retouch = { combine, split, highPass, blurClamped };
 })();

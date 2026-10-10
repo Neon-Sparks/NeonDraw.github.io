@@ -1,4 +1,4 @@
-/* Neon Draw — papers and canvases. A document can sit on a paper: its tint and texture are painted
+/* Neon Sparks Draw — papers and canvases. A document can sit on a paper: its tint and texture are painted
  * into the background layer, and its tooth changes how each kind of brush behaves:
  *   dry media (pencil, charcoal, pastel, crayon) catch only the peaks of the grain, more on rough paper;
  *   watercolour granulates into the valleys and spreads further on absorbent paper;

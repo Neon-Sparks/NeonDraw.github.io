@@ -1,4 +1,4 @@
-/* Neon Draw — document model: layer tree, masks, adjustment layers, layer effects,
+/* Neon Sparks Draw — document model: layer tree, masks, adjustment layers, layer effects,
  * compositor, history and strokes.
  *
  * Painting always goes to the current "surface": the active layer's pixels, its mask
@@ -146,6 +146,25 @@
   }
 
   /* ---------------- Document ---------------- */
+  // a small number for each canvas object (so a fingerprint notices when a layer's canvas is swapped)
+  const canvasIds = new WeakMap();
+  let nextCanvasId = 1;
+  const idOf = (o) => { if (!o) return 0; let v = canvasIds.get(o); if (!v) { v = nextCanvasId++; canvasIds.set(o, v); } return v; };
+  // the box around a canvas's visible pixels (w × h area at 0,0), or null when it is empty
+  function alphaBounds(c, w, h) {
+    if (c._nd16) return { x: 0, y: 0, w, h };
+    const d = new Uint32Array(U.ctx(c).getImageData(0, 0, w, h).data.buffer);
+    let x0 = w, y0 = h, x1 = -1, y1 = -1;
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      let a = -1, b = -1;
+      for (let x = 0; x < w; x++) if (d[row + x] >>> 24) { a = x; break; }
+      if (a < 0) continue;
+      for (let x = w - 1; x >= a; x--) if (d[row + x] >>> 24) { b = x; break; }
+      if (a < x0) x0 = a; if (b > x1) x1 = b; if (y < y0) y0 = y; y1 = y;
+    }
+    return x1 < 0 ? null : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+  }
   class Doc {
     constructor(w, h, bg) {
       this.width = w;
@@ -159,7 +178,10 @@
       this.quickMask = null; // greyscale canvas while quick-mask mode is on
       this.editMask = false; // paint on the active node's mask
       this.guides = []; // {axis:'x'|'y', pos}
-      this.paths = []; // Bézier paths (pen tool)
+      this.paths = [];
+      this.alphaChannels = []; // saved selections (grey canvases, white = selected)
+      this.chanEdit = { r: true, g: true, b: true }; // colour channels you paint on
+      this.chanView = { r: true, g: true, b: true }; // colour channels you see // Bézier paths (pen tool)
       this.activePath = null;
       this.assistants = []; // perspective / ruler helpers
       this.projection = U.canvas(w, h);
@@ -496,6 +518,13 @@
     exitQuickMask() {
       const q = this.quickMask;
       if (!q) return;
+      if (this.qmChannel) {
+        // finished painting on an alpha channel: it stays a channel (the selection is left alone)
+        this.quickMask = null; this.discardStroke(); markMask(q);
+        this.qmChannel = null;
+        this.emit('quickmask'); this.emit('channels');
+        return;
+      }
       this.quickMask = null;
       this.discardStroke();
       markMask(q);
@@ -503,6 +532,48 @@
       const empty = !ND.Sel.bbox(a, 4);
       this.changeSelection('Quick Mask', empty ? null : a);
       this.emit('quickmask');
+    }
+
+    /* ----- alpha channels (saved selections) ----- */
+    saveSelectionAsChannel(name) {
+      if (!this.selectionMask) return null;
+      const g = newMask(this.width, this.height, '#000');
+      U.ctx(g).drawImage(this.selectionMask, 0, 0);
+      greyify(g, { x: 0, y: 0, w: this.width, h: this.height });
+      const ch = { id: 'ch' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: name || 'Alpha ' + (this.alphaChannels.length + 1), canvas: g };
+      const add = () => { this.alphaChannels.push(ch); this.emit('channels'); }, remove = () => { this.alphaChannels = this.alphaChannels.filter((c) => c !== ch); this.emit('channels'); };
+      add();
+      this.history.push({ label: 'Save Selection as Channel', bytes: 64, undo: remove, redo: add });
+      return ch;
+    }
+    deleteChannel(ch) {
+      const i = this.alphaChannels.indexOf(ch);
+      if (i < 0) return;
+      if (this.qmChannel === ch) this.exitQuickMask();
+      const remove = () => { this.alphaChannels = this.alphaChannels.filter((c) => c !== ch); this.emit('channels'); };
+      const add = () => { this.alphaChannels.splice(Math.min(i, this.alphaChannels.length), 0, ch); this.emit('channels'); };
+      remove();
+      this.history.push({ label: 'Delete Channel', bytes: 64, undo: add, redo: remove });
+    }
+    // mode: 'replace' | 'add' | 'subtract' | 'intersect'
+    loadChannelSelection(ch, mode) {
+      markMask(ch.canvas);
+      const a = U.clone(maskAlpha(ch.canvas)), cur = this.selectionMask;
+      if (cur && mode && mode !== 'replace') {
+        const x = U.ctx(a);
+        if (mode === 'add') { x.drawImage(cur, 0, 0); }
+        else if (mode === 'subtract') { const c = U.clone(cur), cx = U.ctx(c); cx.globalCompositeOperation = 'destination-out'; cx.drawImage(a, 0, 0); x.globalCompositeOperation = 'copy'; x.drawImage(c, 0, 0); }
+        else if (mode === 'intersect') { x.globalCompositeOperation = 'destination-in'; x.drawImage(cur, 0, 0); }
+      }
+      this.changeSelection('Load Channel', ND.Sel.bbox(a, 4) ? a : null);
+    }
+    // paint on an alpha channel (shown like a quick mask: white = selected); Q or Done finishes
+    editChannel(ch) {
+      if (this.quickMask) this.exitQuickMask();
+      this.quickMask = ch.canvas;
+      this.qmChannel = ch;
+      this.quickRev = (this.quickRev || 0) + 1;
+      this.emit('quickmask'); this.emit('channels');
     }
 
     /* ----- compositor ----- */
@@ -571,7 +642,11 @@
         x.translate(-r.x, -r.y); x.transform(L.tw.m.a, L.tw.m.b, L.tw.m.c, L.tw.m.d, L.tw.m.e, L.tw.m.f); x.globalAlpha = L.tw.o;
         x.drawImage(L.canvas, 0, 0); x.restore();
       } else x.drawImage(L.canvas, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
-      if (this.stroke && L === this.active && this.stroke.kind === 'pixels') this.applyStrokeTo(x, r);
+      if (this.stroke && L === this.active && this.stroke.kind === 'pixels') {
+        this.applyStrokeTo(x, r);
+        // live preview of painting on only some colour channels
+        if (ND.Channels && ND.Channels.limited(this)) x.putImageData(ND.Channels.mix(x.getImageData(0, 0, r.w, r.h), U.ctx(L.canvas).getImageData(r.x, r.y, r.w, r.h), this.chanEdit), 0, 0);
+      }
       return c;
     }
     // Alpha mask for a node inside rect (white with alpha), including a live mask stroke. Null = no mask.
@@ -596,6 +671,11 @@
     }
     // Apply an adjustment node onto ctx (rect-local) — the backdrop below it.
     applyAdjust(ctx, n, r) {
+      const env = { x: r.x, y: r.y, docW: this.width, docH: this.height, fg: ND.App ? ND.App.state.fg : '#000000', bg: ND.App ? ND.App.state.bg : '#ffffff' };
+      // 16-bit documents: worked out at full precision
+      if (ctx.canvas && ctx.canvas._nd16 && ND.Deep && ND.Deep.adjust16(ctx, n, r, env, this.maskRect(n, r))) return;
+      // fast path: on the graphics card as a colour table (much less lag while dragging sliders)
+      if (ND.GPU && ND.GPU.pointwise(n.kind) && ND.GPU.adjust(ctx, r, n, this.maskRect(n, r), env)) return;
       const img = ctx.getImageData(0, 0, r.w, r.h);
       const orig = new Uint8ClampedArray(img.data);
       ND.Adjust.apply(n.kind, img, n.params, { x: r.x, y: r.y, docW: this.width, docH: this.height, fg: ND.App ? ND.App.state.fg : '#000000', bg: ND.App ? ND.App.state.bg : '#ffffff' });
@@ -622,43 +702,171 @@
       this.applyMaskTo(U.ctx(base), this.maskRect(n, r), r);
       return base;
     }
+    // a short fingerprint of what some layers look like (to know when a cached result is still right)
+    sigOf(nodes) {
+      return nodes.map((n) => [idOf(n.canvas), idOf(n.mask), n.type, n.visible ? 1 : 0, n.opacity, n.blendMode, n.clip ? 1 : 0, n.rev, n.kind || '', n.params ? JSON.stringify(n.params) : '', n.maskEnabled ? 1 : 0, n.effects ? JSON.stringify(n.effects) : '', n.tw ? n.tw.m.toString() + n.tw.o : '', n.children ? '[' + this.sigOf(n.children) + ']' : ''].join(',')).join(';');
+    }
     composeChildren(ctx, children, r) {
       const lvl0 = this._level || 0;
-      for (let i = 0; i < children.length; i++) {
+      /* Editing an adjustment layer: everything below it stays the same while its sliders move, so that
+       * part is kept from the previous redraw and only the adjustment and the layers above are redone. */
+      let start = 0, snapAt = -1, sig = '';
+      const act = this.active;
+      if (children === this.root.children && act && act.isAdjust && !act.clip && !this.stroke && r.x === 0 && r.y === 0 && r.w === this.width && r.h === this.height) {
+        const ai = children.indexOf(act);
+        if (ai > 0) {
+          sig = this.sigOf(children.slice(0, ai)) + '|' + (ND.App ? ND.App.state.fg + ND.App.state.bg : '');
+          const c = this._below;
+          if (c && c.sig === sig && c.node === act && c.canvas.width === r.w && c.canvas.height === r.h) { ctx.save(); ctx.globalCompositeOperation = 'copy'; ctx.drawImage(c.canvas, 0, 0); ctx.restore(); start = ai; }
+          else snapAt = ai;
+        }
+      }
+      for (let i = start; i < children.length; i++) {
+        if (i === snapAt) {
+          const c = this._below && this._below.canvas.width === r.w && this._below.canvas.height === r.h ? this._below.canvas : U.canvas(r.w, r.h), cx2 = U.ctx(c);
+          cx2.clearRect(0, 0, r.w, r.h); cx2.drawImage(ctx.canvas, 0, 0, r.w, r.h, 0, 0, r.w, r.h);
+          this._below = { sig, node: act, canvas: c };
+        }
         const n = children[i];
         if (n.clip && i > 0) continue;
         let j = i + 1;
         const clips = [];
         while (j < children.length && children[j].clip) { clips.push(children[j]); j++; }
         if (!n.visible) continue;
-        if (n.isAdjust && !ND.Adjust.isFill(n.kind)) { this.applyAdjust(ctx, n, r); this._level = lvl0; continue; }
-        const base = this.composeNode(n, r), bx = U.ctx(base);
-        const fx = n.effects && ND.Effects && ND.Effects.any(n.effects) ? n.effects : null;
-        if (fx) ND.Effects.inner(this, bx, base, r, fx);
-        if (clips.some((c) => c.visible)) {
-          const keep = this.tmp(this._level++, r.w, r.h);
-          U.ctx(keep).drawImage(base, 0, 0);
-          for (const c of clips) {
-            if (!c.visible) continue;
-            if (c.isAdjust && !ND.Adjust.isFill(c.kind)) {
-              // adjust only the base: run it on a copy and restore the base alpha
-              this.applyAdjust(bx, c, r);
-              this.applyMaskTo(bx, keep, r);
-              continue;
-            }
-            const px = this.composeNode(c, r), pxx = U.ctx(px);
-            pxx.save(); pxx.globalCompositeOperation = 'destination-in'; pxx.drawImage(keep, 0, 0, r.w, r.h, 0, 0, r.w, r.h); pxx.restore();
-            if (c.blendMode === 'normal') {
-              bx.save(); bx.globalAlpha = c.opacity; bx.globalCompositeOperation = 'source-atop';
-              bx.drawImage(px, 0, 0, r.w, r.h, 0, 0, r.w, r.h); bx.restore();
-            } else this.blendCanvasInto(bx, px, c.blendMode, c.opacity, r, true);
+        if (n.isAdjust && !ND.Adjust.isFill(n.kind)) {
+          // filter / Develop layers are slow: keep their result while nothing below them changes
+          const key = !ND.GPU.pointwise(n.kind) ? this.cacheKeyBelow(children, i, n, r) : null;
+          if (key && n._ac && n._ac.key === key) { ctx.save(); ctx.globalCompositeOperation = 'copy'; ctx.drawImage(n._ac.canvas, 0, 0, r.w, r.h, 0, 0, r.w, r.h); ctx.restore(); }
+          else {
+            this.applyAdjust(ctx, n, r);
+            if (key) { const c = n._ac && n._ac.canvas.width === r.w && n._ac.canvas.height === r.h ? n._ac.canvas : U.canvas(r.w, r.h), cx3 = U.ctx(c); cx3.clearRect(0, 0, r.w, r.h); cx3.drawImage(ctx.canvas, 0, 0, r.w, r.h, 0, 0, r.w, r.h); n._ac = { key, canvas: c }; }
           }
+          this._level = lvl0;
+          continue;
         }
-        if (fx) ND.Effects.outer(this, bx, base, r, fx);
+        const fx = n.effects && ND.Effects && ND.Effects.any(n.effects) ? n.effects : null;
+        // Pass Through group: its layers blend straight onto what's below (a group with a layer style or
+        // clipped layers on top needs one flat picture of its own, so it is drawn isolated instead)
+        if (n.isGroup && n.blendMode === 'passthrough' && !fx && !clips.some((c) => c.visible)) {
+          this.composePassThrough(ctx, n, r);
+          this._level = lvl0;
+          continue;
+        }
+        if (fx && ND.Doc.fxCache && !this.beingEdited([n].concat(clips))) {
+          /* A layer with a layer style that you're not working on right now: its finished look (style and
+           * clipped layers included) is kept, so changing other layers doesn't redo the style every time. */
+          const W = this.width, H = this.height, key = this.sigOf([n].concat(clips)) + '|' + (ND.App ? ND.App.state.fg + ND.App.state.bg : '');
+          let c = n._fxc;
+          if (!c || c.key !== key || c.canvas.width !== W || c.canvas.height !== H) {
+            const full = { x: 0, y: 0, w: W, h: H }, styled = this.styledNode(n, clips, full);
+            const cc = c && c.canvas.width === W && c.canvas.height === H ? c.canvas : U.canvas(W, H), cx4 = U.ctx(cc);
+            cx4.clearRect(0, 0, W, H); cx4.drawImage(styled, 0, 0, W, H, 0, 0, W, H);
+            n._fxc = c = { key, canvas: cc };
+            this._level = lvl0;
+          }
+          this.blendCanvasInto(ctx, c.canvas, n.blendMode, n.opacity, r, false);
+          this._level = lvl0;
+          continue;
+        }
+        if (fx) n._fxc = null;
+        const base = this.styledNode(n, clips, r);
         this.blendCanvasInto(ctx, base, n.blendMode, n.opacity, r, true);
         this._level = lvl0;
       }
       this._level = lvl0;
+    }
+    /* Pass Through: the group's layers are composited directly onto the backdrop (`ctx`), so blend modes and
+     * adjustment layers inside it see — and change — what is under the group. The group's opacity and mask then
+     * fade between the backdrop without the group (B) and with it (R): result = B·(1 − k) + R·k, k = opacity × mask. */
+    composePassThrough(ctx, n, r) {
+      const lvl = this._level, m = this.maskRect(n, r), full = n.opacity >= 1 && !m;
+      let B = null;
+      if (!full) { B = this.tmp(this._level++, r.w, r.h); U.ctx(B).drawImage(ctx.canvas, 0, 0, r.w, r.h, 0, 0, r.w, r.h); }
+      this._ptDepth = (this._ptDepth || 0) + 1;
+      try { this.composeChildren(ctx, n.children, r); } finally { this._ptDepth--; }
+      if (!full) {
+        const R = this.tmp(this._level++, r.w, r.h), rx = U.ctx(R);
+        rx.drawImage(ctx.canvas, 0, 0, r.w, r.h, 0, 0, r.w, r.h);
+        if (m) { rx.save(); rx.globalCompositeOperation = 'destination-in'; rx.drawImage(m, 0, 0, r.w, r.h, 0, 0, r.w, r.h); rx.restore(); }
+        ctx.save();
+        ctx.globalCompositeOperation = 'copy'; ctx.drawImage(B, 0, 0, r.w, r.h, 0, 0, r.w, r.h);
+        // B·(1 − k): take away k of the backdrop…
+        ctx.globalAlpha = n.opacity; ctx.globalCompositeOperation = 'destination-out';
+        if (m) ctx.drawImage(m, 0, 0, r.w, r.h, 0, 0, r.w, r.h); else { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, r.w, r.h); }
+        // …and add R·k
+        ctx.globalCompositeOperation = 'lighter'; ctx.drawImage(R, 0, 0, r.w, r.h, 0, 0, r.w, r.h);
+        ctx.restore();
+      }
+      this._level = lvl;
+    }
+    // is the user working on one of these layers right now (active, inside the active group, or containing it)?
+    beingEdited(nodes) {
+      const a = this.active;
+      if (!a) return false;
+      return nodes.some((n) => n === a || this.isInside(a, n) || this.isInside(n, a));
+    }
+    // fingerprint of everything below child i (for caching a slow filter layer's result); null = don't cache
+    cacheKeyBelow(children, i, n, r) {
+      // inside a Pass Through group the backdrop also holds layers outside the group: don't cache there
+      if (this._ptDepth) return null;
+      const below = children.slice(0, i);
+      if (this.beingEdited(below)) return null;
+      return [r.x, r.y, r.w, r.h, this.sigOf(below), this.sigOf([n]), ND.App ? ND.App.state.fg + ND.App.state.bg : ''].join('|');
+    }
+    // A layer with its style and clipped layers, ready to blend (rect-sized canvas from the pool).
+    styledNode(n, clips, r) {
+      const base = this.composeNode(n, r), bx = U.ctx(base);
+      const fx = n.effects && ND.Effects && ND.Effects.any(n.effects) ? n.effects : null;
+      const anyClip = clips.some((c) => c.visible);
+      /* Styles only reach a little way around the layer's pixels, so they are worked out in the box around its
+       * content (plus that reach) instead of the whole area: much less work for text and logos. */
+      let sub = null, sb = null, sx = null;
+      if (fx) {
+        const bb = alphaBounds(base, r.w, r.h);
+        if (!bb) return base; // nothing on the layer: no style either
+        const m = Math.ceil(ND.Effects.extent(fx)) + 4;
+        sub = U.clipRect({ x: bb.x - m, y: bb.y - m, w: bb.w + 2 * m, h: bb.h + 2 * m }, r.w, r.h);
+        sb = U.canvas(sub.w, sub.h); sx = U.ctx(sb);
+      }
+      const sr = sub && { x: r.x + sub.x, y: r.y + sub.y, w: sub.w, h: sub.h };
+      const grab = () => { sx.save(); sx.globalCompositeOperation = 'copy'; sx.drawImage(base, sub.x, sub.y, sub.w, sub.h, 0, 0, sub.w, sub.h); sx.restore(); };
+      const putBack = () => { bx.save(); bx.globalCompositeOperation = 'copy'; bx.beginPath(); bx.rect(sub.x, sub.y, sub.w, sub.h); bx.clip(); bx.drawImage(sb, sub.x, sub.y); bx.restore(); };
+      if (fx) grab();
+      // layer styles on the graphics card when possible (falls back to the CPU version)
+      const g = fx && ND.GPUFX && ND.Doc.gpuFx !== false ? ND.GPUFX.effects(sb, sub.w, sub.h, fx, !anyClip) : null;
+      const atop = (ctx, src) => { if (!src) return; ctx.save(); ctx.globalCompositeOperation = 'source-atop'; ctx.drawImage(src, 0, 0); ctx.restore(); };
+      if (fx) {
+        if (g) atop(sx, g.inner); else ND.Effects.inner(this, sx, sb, sr, fx);
+        putBack();
+      }
+      if (anyClip) {
+        const keep = this.tmp(this._level++, r.w, r.h);
+        U.ctx(keep).drawImage(base, 0, 0);
+        for (const c of clips) {
+          if (!c.visible) continue;
+          if (c.isAdjust && !ND.Adjust.isFill(c.kind)) {
+            // adjust only the base: run it on a copy and restore the base alpha
+            this.applyAdjust(bx, c, r);
+            this.applyMaskTo(bx, keep, r);
+            continue;
+          }
+          const px = this.composeNode(c, r), pxx = U.ctx(px);
+          pxx.save(); pxx.globalCompositeOperation = 'destination-in'; pxx.drawImage(keep, 0, 0, r.w, r.h, 0, 0, r.w, r.h); pxx.restore();
+          if (c.blendMode === 'normal') {
+            bx.save(); bx.globalAlpha = c.opacity; bx.globalCompositeOperation = 'source-atop';
+            bx.drawImage(px, 0, 0, r.w, r.h, 0, 0, r.w, r.h); bx.restore();
+          } else this.blendCanvasInto(bx, px, c.blendMode, c.opacity, r, true);
+        }
+      }
+      if (fx) {
+        if (anyClip) grab();
+        if (g) {
+          atop(sx, g.inside);
+          if (g.outer) { sx.save(); sx.globalCompositeOperation = 'destination-over'; sx.drawImage(g.outer, 0, 0); sx.restore(); }
+        } else ND.Effects.outer(this, sx, sb, sr, fx);
+        putBack();
+      }
+      return base;
     }
 
     /* ----- selection ----- */
@@ -681,6 +889,8 @@
     /* ----- pixel edits with undo ----- */
     // Record an edit of any canvas surface (layer pixels, mask or quick mask).
     recordSurface(S, beforeImg, rect, label, prevText) {
+      // painting on only some colour channels: put the others back (text, shapes and smart objects redraw whole)
+      if (S.kind === 'pixels' && ND.Channels && ND.Channels.limited(this) && !['Text', 'Shape', 'Smart'].includes(label)) ND.Channels.restore(S.canvas, beforeImg, rect, this.chanEdit);
       const c = S.canvas, afterImg = U.ctx(c).getImageData(rect.x, rect.y, rect.w, rect.h);
       const touch = () => {
         // painting pixels on a text or vector shape layer turns it into an ordinary paint layer
@@ -935,4 +1145,6 @@
   ND.DocMask = DocMask;
   ND.TileBackup = TileBackup;
   ND.Doc = Doc;
+  Doc.fxCache = true; // keep finished layer-style results while their layer isn't being worked on
+  Doc.gpuFx = true;   // layer styles and blurs on the graphics card (Options ▸ Graphics card)
 })();

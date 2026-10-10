@@ -1,4 +1,4 @@
-/* Neon Draw — retouch tools (spot heal, patch, red-eye, liquify), perspective & ruler assistants,
+/* Neon Sparks Draw — retouch tools (spot heal, patch, red-eye, liquify), perspective & ruler assistants,
  * rulers + guides with snapping, and the quick-mask overlay. Hooked into viewport.js. */
 'use strict';
 (function () {
@@ -185,6 +185,7 @@
     }
     if (ND.Pen) ND.Pen.overlay(cx, lw, zr);
     if (ND.AIRemove) ND.AIRemove.overlay(cx, lw);
+    if (ND.CAMove) ND.CAMove.overlay(cx, lw);
     const VV = V();
     // smoothing "string": from the line's end to the pen
     if (VV.stroke && VV.stroke.rope && VV.stroke.smooth && VV.stroke.lastRaw && VV.stroke.s.stabilizer >= 0.15) {
@@ -271,6 +272,7 @@
     // move an existing guide with the move tool
     if (tool === 'pen' && ND.Pen) return ND.Pen.down(e, p);
     if (tool === 'airemove' && ND.AIRemove) return ND.AIRemove.down(e, p);
+    if (tool === 'camove' && ND.CAMove) return ND.CAMove.down(e, p);
     if (tool === 'move' && d.guides.length) {
       for (let i = 0; i < d.guides.length; i++) {
         const g = d.guides[i], s = V().toScreen(g.axis === 'x' ? g.pos : p.x, g.axis === 'y' ? g.pos : p.y);
@@ -350,6 +352,7 @@
     if (!dr || !dr.tool.startsWith('x-')) return false;
     if (dr.tool === 'x-pen') ND.Pen.move(e, p);
     else if (dr.tool === 'x-airemove') ND.AIRemove.move(e, p);
+    else if (dr.tool === 'x-camove') ND.CAMove.move(e, p);
     else if (dr.tool === 'x-guide') { dr.pos = dr.axis === 'x' ? Math.round(p.x) : Math.round(p.y); dr.out = dr.axis === 'x' ? l.sx < RULER : l.sy < RULER; V().request(); }
     else if (dr.tool === 'x-assist') { const q = e.shiftKey ? p : T.snap(p); dr.h.x = q.x; dr.h.y = q.y; V().request(); }
     else if (dr.tool === 'x-patch') { dr.cur = p; V().request(); }
@@ -372,6 +375,7 @@
     const d = App.doc;
     if (dr.tool === 'x-pen') { ND.Pen.up(dr); return; }
     if (dr.tool === 'x-airemove') { ND.AIRemove.up(dr); return; }
+    if (dr.tool === 'x-camove') { ND.CAMove.up(dr); return; }
     if (dr.tool === 'x-guide') {
       const g = d.guides.slice();
       if (dr.index >= 0) g.splice(dr.index, 1);

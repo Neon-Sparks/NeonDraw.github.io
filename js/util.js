@@ -1,4 +1,4 @@
-/* Neon Draw — shared helpers.
+/* Neon Sparks Draw — shared helpers.
  * Every script attaches to the global ND namespace (classic scripts, so the app
  * runs straight from file:// without a web server or build step). */
 'use strict';

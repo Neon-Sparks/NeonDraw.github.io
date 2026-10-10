@@ -1,4 +1,4 @@
-/* Neon Draw — small reusable UI controls. Each control exposes refresh() to pull its value from state. */
+/* Neon Sparks Draw — small reusable UI controls. Each control exposes refresh() to pull its value from state. */
 'use strict';
 (function () {
   const U = ND.U, h = U.h;
@@ -96,7 +96,8 @@
 
   C.button = function (label, onClick, o) {
     o = o || {};
-    const b = h('button.nd-btn' + (o.cls ? '.' + o.cls : ''), { type: 'button', title: o.title || (typeof label === 'string' ? label : '') });
+    // o.cls may list several classes ('sm primary' or 'sm.primary')
+    const b = h('button.nd-btn' + (o.cls ? '.' + o.cls.trim().split(/[\s.]+/).join('.') : ''), { type: 'button', title: o.title || (typeof label === 'string' ? label : '') });
     if (o.icon) b.appendChild(ND.icon(o.icon, o.iconSize || 16));
     if (label) b.appendChild(h('span', label));
     b.addEventListener('click', (e) => { e.stopPropagation(); onClick(e); });

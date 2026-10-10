@@ -1,4 +1,4 @@
-/* Neon Draw — animation timeline: frames grid, playback, onion skin controls and export (GIF / WebM / PNGs). */
+/* Neon Sparks Draw — animation timeline: frames grid, playback, onion skin controls and export (GIF / WebM / PNGs). */
 'use strict';
 (function () {
   const U = ND.U, h = U.h, App = ND.App, A = ND.Anim;

@@ -1,4 +1,4 @@
-/* Neon Draw — retouching: spot healing, patch, content-aware fill, red-eye, and Liquify. */
+/* Neon Sparks Draw — retouching: spot healing, patch, content-aware fill, red-eye, and Liquify. */
 'use strict';
 (function () {
   const U = ND.U;

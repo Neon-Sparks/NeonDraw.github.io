@@ -1,4 +1,4 @@
-/* Neon Draw — pop-up palette (Krita style): right-click the canvas (or press the pen's side button)
+/* Neon Sparks Draw — pop-up palette (Krita style): right-click the canvas (or press the pen's side button)
  * for a ring of favourite brushes, recent colours and a colour wheel right under the cursor. */
 'use strict';
 (function () {

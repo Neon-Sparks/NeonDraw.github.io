@@ -1,4 +1,4 @@
-/* Neon Draw — adjustment layers and fill layers (non-destructive), curves maths and histograms. */
+/* Neon Sparks Draw — adjustment layers and fill layers (non-destructive), curves maths and histograms. */
 'use strict';
 (function () {
   const U = ND.U;

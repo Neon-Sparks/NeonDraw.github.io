@@ -1,4 +1,4 @@
-/* Neon Draw — bootstrap: builds the UI, wires keyboard shortcuts, drag & drop, paste and autosave. */
+/* Neon Sparks Draw — bootstrap: builds the UI, wires keyboard shortcuts, drag & drop, paste and autosave. */
 'use strict';
 (function () {
   const U = ND.U, h = U.h, App = ND.App;
@@ -195,12 +195,12 @@
   App.pwa = PWA;
   PWA.standalone = () => window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
   PWA.install = async function () {
-    if (PWA.standalone()) return App.toast('Neon Draw is already running as an installed app');
+    if (PWA.standalone()) return App.toast('Neon Sparks Draw is already running as an installed app');
     if (PWA.prompt) {
       PWA.prompt.prompt();
       const r = await PWA.prompt.userChoice;
       PWA.prompt = null; PWA.refresh();
-      if (r.outcome === 'accepted') App.toast('Installing Neon Draw…');
+      if (r.outcome === 'accepted') App.toast('Installing Neon Sparks Draw…');
       return;
     }
     ND.Dialogs.installHelp(location.protocol === 'file:' || !!window.ND_SINGLE_FILE);
@@ -212,17 +212,17 @@
   };
   function setupPWA() {
     const right = document.querySelector('.nd-menubar-right');
-    const inst = U.h('button.nd-pill.nd-install', { type: 'button', title: 'Install Neon Draw as an app — opens in its own window and works offline' }, ND.icon('download', 15), U.h('span', 'Install app'));
-    const upd = U.h('button.nd-pill.nd-update', { type: 'button', title: 'A new version of Neon Draw is ready — your work is saved first' }, ND.icon('refresh', 15), U.h('span', 'Update ready'));
+    const inst = U.h('button.nd-pill.nd-install', { type: 'button', title: 'Install Neon Sparks Draw as an app — opens in its own window and works offline' }, ND.icon('download', 15), U.h('span', 'Install app'));
+    const upd = U.h('button.nd-pill.nd-update', { type: 'button', title: 'A new version of Neon Sparks Draw is ready — your work is saved first' }, ND.icon('refresh', 15), U.h('span', 'Update ready'));
     inst.addEventListener('click', () => PWA.install());
     upd.addEventListener('click', () => PWA.update());
     right.insertBefore(upd, right.firstChild); right.insertBefore(inst, right.firstChild);
     PWA.refresh = () => { inst.hidden = !PWA.prompt || PWA.standalone(); upd.hidden = !PWA.waiting; };
     PWA.refresh();
     window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); PWA.prompt = e; PWA.refresh(); });
-    window.addEventListener('appinstalled', () => { PWA.prompt = null; PWA.refresh(); App.toast('Neon Draw installed — find it in your Start menu / apps'); });
+    window.addEventListener('appinstalled', () => { PWA.prompt = null; PWA.refresh(); App.toast('Neon Sparks Draw installed — find it in your Start menu / apps'); });
     if (PWA.standalone()) document.body.classList.add('nd-standalone');
-    // files opened with the installed app ("Open with → Neon Draw")
+    // files opened with the installed app ("Open with → Neon Sparks Draw")
     if ('launchQueue' in window) {
       window.launchQueue.setConsumer(async (params) => {
         for (const fh of (params.files || [])) { try { await App.openFile(await fh.getFile(), fh); } catch (e) { App.toast('Could not open that file'); } }
@@ -232,7 +232,7 @@
     navigator.serviceWorker.register('sw.js').then((reg) => {
       const watch = (w) => {
         if (!w) return;
-        const check = () => { if (w.state === 'installed' && navigator.serviceWorker.controller) { PWA.waiting = w; PWA.refresh(); App.toast('A new version of Neon Draw is ready — click “Update ready” to switch', 5000); } };
+        const check = () => { if (w.state === 'installed' && navigator.serviceWorker.controller) { PWA.waiting = w; PWA.refresh(); App.toast('A new version of Neon Sparks Draw is ready — click “Update ready” to switch', 5000); } };
         check(); w.addEventListener('statechange', check);
       };
       watch(reg.waiting);
@@ -246,6 +246,8 @@
   /* ---------------- boot ---------------- */
   async function boot() {
     App.loadPrefs();
+    if (ND.Options) ND.Options.applyGPU();
+    if (ND.Lang) ND.Lang.set(App.state.lang || 'en');
     await App.loadUserData();
     await ND.Files.loadRecent();
     const $ = (id) => document.getElementById(id);
@@ -259,6 +261,11 @@
     ND.ColourPanel.build($('nd-dock-scroll'));
     ND.BrushPanel.build($('nd-dock-scroll'));
     ND.AdjustPanel.build($('nd-dock-scroll'));
+    // the newer panels start folded (click their title to open); after that they remember their state
+    ['gradients', 'retouch', 'actions'].forEach((k) => { if (!(k in App.state.collapsed)) App.state.collapsed[k] = true; });
+    ND.GradientPanel.build($('nd-dock-scroll'));
+    ND.RetouchPanel.build($('nd-dock-scroll'));
+    ND.Actions.build($('nd-dock-scroll'));
     App.on('adjust', () => { const el = document.querySelector('.nd-props'); if (el && el.parentNode) { const sec = el.closest('.nd-section'); if (sec) { sec.classList.remove('collapsed'); App.state.collapsed.properties = false; sec.scrollIntoView({ behavior: 'smooth', block: 'start' }); } } });
     ND.LayersPanel.build($('nd-dock-layers'));
     // one or two columns of panels, rearranged by dragging their title bars
@@ -287,7 +294,7 @@
       const mark = App.dirty && d.fileHandle ? '● ' : '';
       docName.textContent = mark + d.name + ' — ' + d.width + '×' + d.height;
       docName.title = (d.fileHandle ? 'Saved as ' + d.fileHandle.name + (mark ? ' · unsaved changes (Ctrl+S)' : '') + '\n' : '') + 'Click to rename the document';
-      document.title = mark + d.name + ' — Neon Draw';
+      document.title = mark + d.name + ' — Neon Sparks Draw';
     };
     App.on('doc', refreshTop); App.on('docchange', refreshTop); App.on('saved', refreshTop);
     App.on('doc', (t) => { if (t === 'selection' && App.doc.selectionMask) App.lastSelection = App.doc.selectionMask; });

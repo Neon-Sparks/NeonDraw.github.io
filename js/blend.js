@@ -1,4 +1,4 @@
-/* Neon Draw — blend modes.
+/* Neon Sparks Draw — blend modes.
  * Modes the browser supports natively are composited on the GPU with
  * globalCompositeOperation; the rest fall back to the per-pixel JS path. */
 'use strict';
@@ -39,6 +39,9 @@
     lighten: 'lighten', dodge: 'color-dodge', burn: 'color-burn', hardlight: 'hard-light',
     softlight: 'soft-light', difference: 'difference', exclusion: 'exclusion', hue: 'hue',
     saturation: 'saturation', color: 'color', luminosity: 'luminosity',
+    // groups only: "Pass Through" is handled by the compositor (document.js); anywhere a group is drawn on its
+    // own (thumbnails, merging, exports) it falls back to Normal
+    passthrough: 'source-over',
   };
 
   const C = Math.min, X = Math.max;
@@ -130,7 +133,7 @@
     NATIVE,
     isNative: (m) => !!NATIVE[m],
     blendImageData,
-    label: (id) => (MODES.find((m) => m.id === id) || MODES[0]).label,
+    label: (id) => (id === 'passthrough' ? 'Pass Through' : (MODES.find((m) => m.id === id) || MODES[0]).label),
     // Build <option>/<optgroup> markup for a blend select.
     fillSelect(sel, value) {
       sel.innerHTML = '';

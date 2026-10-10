@@ -1,4 +1,4 @@
-/* Neon Draw — styles */
+/* Neon Sparks Draw — styles */
 :root {
   --bg0: #111216; --bg1: #16171b; --bg2: #1c1e23; --bg3: #23262c; --bg4: #2c3038; --bg5: #383c45;
   --line: #0b0c0f; --line2: #2f333b;
@@ -557,3 +557,29 @@ label.nd-ai-card { cursor: pointer; }
 .nd-tl-cell.mkey::before { content: ''; position: absolute; left: 4px; top: 16px; width: 7px; height: 7px; background: #ffb347; transform: rotate(45deg); z-index: 2; }
 .nd-tl-onion { background: none; border: 0; color: var(--fg2); cursor: pointer; padding: 0 2px; font-size: 13px; }
 .nd-tl-onion.on { color: #2fd67b; } .nd-tl-onion.off { color: var(--fg3); }
+
+/* lock buttons */
+.nd-lockbtn { background: none; border: 0; padding: 1px 3px; margin-left: 4px; color: var(--fg3); cursor: pointer; border-radius: 4px; line-height: 0; opacity: .55; }
+.nd-lockbtn:hover { opacity: 1; background: var(--bg4); }
+.nd-lockbtn.on { color: #ffb347; opacity: 1; }
+.nd-sec-head .nd-lockbtn { margin-left: auto; }
+/* new document: size dropdown */
+.nd-newsize { min-width: 260px; }
+
+/* gradients / retouch / actions panels */
+.nd-gradlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 4px; max-height: 190px; overflow-y: auto; margin-bottom: 6px; }
+.nd-gradbtn { display: flex; flex-direction: column; gap: 2px; padding: 3px; background: var(--bg3); border: 1px solid transparent; border-radius: 5px; color: var(--fg2); font-size: 10px; cursor: pointer; text-align: left; }
+.nd-gradbtn canvas { width: 100%; height: 14px; border-radius: 3px; }
+.nd-gradbtn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nd-gradbtn.active, .nd-gradbtn:hover { border-color: rgba(80,220,255,.6); color: #fff; }
+.nd-retools { display: flex; flex-wrap: wrap; gap: 3px; margin-bottom: 4px; }
+.nd-retool.active { background: var(--acc-bg); color: #fff; }
+.nd-actsteps { display: flex; flex-direction: column; gap: 2px; max-height: 160px; overflow-y: auto; font-size: 11px; color: var(--fg2); }
+.nd-actstep { display: flex; justify-content: space-between; align-items: center; padding: 2px 6px; background: var(--bg3); border-radius: 4px; }
+.nd-btn.rec { background: #b3261e; color: #fff; }
+
+/* Channels panel */
+.nd-chan-row { gap: 6px; }
+.nd-chan-thumb { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 30px; background: #000; border-radius: 3px; overflow: hidden; flex: none; }
+.nd-chan-thumb canvas { display: block; max-width: 44px; max-height: 30px; }
+.nd-chan-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

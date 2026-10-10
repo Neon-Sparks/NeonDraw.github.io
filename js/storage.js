@@ -1,4 +1,4 @@
-/* Neon Draw — saving, loading and exporting.
+/* Neon Sparks Draw — saving, loading and exporting.
  *  .ndraw  project files (JSON, compatible with earlier versions)
  *  .ora    OpenRaster (opens in Krita, GIMP, MyPaint) — export and import
  *  .psd    layered Photoshop export
@@ -26,12 +26,13 @@
     return {
       app: 'pigment', version: 3, depth: doc.depth || 8, width: doc.width, height: doc.height, name: doc.name, backgroundColor: doc.backgroundColor,
       guides: doc.guides, assistants: doc.assistants, paper: doc.paper || null, paths: doc.paths || [], activePath: doc.activePath || null, anim: doc.anim || null,
+      channels: (doc.alphaChannels || []).map((c) => ({ name: c.name, png: enc(c.canvas) })),
       layers: flatList(doc).map(({ node: n, depth }) => ({
         type: n.type, name: n.name, visible: n.visible, opacity: n.opacity, blendMode: n.blendMode, isGroup: n.isGroup, depth,
         locked: n.locked, alphaLock: n.alphaLock, clip: n.clip, collapsed: !!n.collapsed,
         png: n.isPixel ? enc(n.canvas) : '',
         mask: n.mask ? enc(n.mask) : null, maskEnabled: n.maskEnabled,
-        effects: n.effects || null, kind: n.kind || null, params: n.params || null, textData: n.textData || null, shapeData: n.shapeData || null, colorizeData: n.colorizeData || null,
+        effects: n.effects || null, kind: n.kind || null, params: n.params || null, textData: n.textData || null, shapeData: n.shapeData || null, colorizeData: n.colorizeData || null, fsRole: n.fsRole || null, pickEachStroke: n.pickEachStroke || null,
         frames: n.isPixel && n.frames ? Object.keys(n.frames).map((k) => ({ at: +k, png: enc(n.frames[k]) })) : null,
         smart: n.isPixel ? smartOut(n.smart) : null,
         tween: n.tween || null, onion: n.onion || null,
@@ -47,6 +48,7 @@
     const fix = (v) => (typeof v === 'string' && v[0] === '#' ? urls[+v.slice(1)] : v);
     const fixAll = (o) => o.layers.forEach((l) => { l.png = fix(l.png); l.mask = fix(l.mask); if (l.frames) l.frames.forEach((f) => { f.png = fix(f.png); }); if (l.smart) { l.smart.png = fix(l.smart.png); if (l.smart.contents) fixAll(l.smart.contents); } });
     fixAll(obj);
+    (obj.channels || []).forEach((c) => { c.png = fix(c.png); });
     return JSON.stringify(obj);
   }
   async function deserialize(text, blobs) {
@@ -61,7 +63,7 @@
       if (blobs && typeof ref === 'string' && ref[0] === '#') return U.blobToImage(blobs[+ref.slice(1)]);
       return U.loadImage(ref);
     };
-    if (s.app !== 'pigment') throw new Error('Not a Neon Draw project');
+    if (s.app !== 'pigment') throw new Error('Not a Neon Sparks Draw project');
     const prevType = U.colorType;
     if (ND.Deep) ND.Deep.use(s.depth === 16 ? 16 : 8);
     const doc = new ND.Doc(s.width, s.height, null);
@@ -73,6 +75,15 @@
     doc.paper = ND.Paper ? ND.Paper.normalise(s.paper) : null;
     doc.paths = Array.isArray(s.paths) ? s.paths : [];
     doc.activePath = s.activePath || null;
+    // alpha channels (saved selections)
+    doc.alphaChannels = [];
+    for (const c of Array.isArray(s.channels) ? s.channels : []) {
+      if (!c || !c.png) continue;
+      const g = U.canvas(s.width, s.height), gx = U.ctx(g);
+      gx.fillStyle = '#000'; gx.fillRect(0, 0, s.width, s.height);
+      gx.drawImage(await load(c.png), 0, 0);
+      doc.alphaChannels.push({ id: 'ch' + doc.alphaChannels.length + Date.now().toString(36), name: c.name || 'Alpha', canvas: g });
+    }
     doc.root.children = [];
     const stack = [doc.root];
     for (const e of s.layers || []) {
@@ -88,6 +99,7 @@
         n.textData = e.textData || null;
         n.shapeData = e.shapeData || null;
         n.colorizeData = e.colorizeData || null;
+        n.fsRole = e.fsRole || null; n.pickEachStroke = !!e.pickEachStroke;
         n.tween = e.tween || null; n.onion = e.onion || null;
         if (e.smart && e.smart.png) {
           const im = await load(e.smart.png), src = U.canvas(im.width, im.height);
@@ -281,7 +293,7 @@
         const attrs = 'name="' + xmlEsc(c.name) + '" opacity="' + c.opacity.toFixed(3) + '" visibility="' + (c.visible ? 'visible' : 'hidden') + '" composite-op="' + (ORA_OP[c.blendMode] || 'svg:src-over') + '"' + (c.locked ? ' edit-locked="true"' : '');
         if (c.isAdjust) continue;
         if (c.isGroup) {
-          xml += ind + '<stack ' + attrs + ' isolation="isolate">\n' + (await rec(c, ind + '  ')) + ind + '</stack>\n';
+          xml += ind + '<stack ' + attrs + ' isolation="' + (c.blendMode === 'passthrough' ? 'auto' : 'isolate') + '">\n' + (await rec(c, ind + '  ')) + ind + '</stack>\n';
         } else {
           const src = 'data/layer' + n++ + '.png';
           files.push({ name: src, data: await pngBytes(bakedPixels(doc, c)) });
@@ -324,6 +336,8 @@
         if (c.tagName === 'stack') {
           const g = new ND.Group(c.getAttribute('name') || 'Group');
           common(g, c);
+          // isolation="auto" on a Normal stack: its layers blend with what's below (Pass Through)
+          if (c.getAttribute('isolation') === 'auto' && g.blendMode === 'normal') g.blendMode = 'passthrough';
           group.children.push(g);
           await rec(c, g);
         } else {
@@ -380,7 +394,20 @@
     w.str('8BIM'); w.str('lsct'); w.u32(12); w.u32(type); w.str('8BIM'); w.str(blend);
   }
   function exportPSD(doc) {
-    const W = doc.width, H = doc.height;
+    const W = doc.width, H = doc.height, deep = doc.depth === 16 && ND.Deep && ND.Deep.supported(), bpc = deep ? 2 : 1;
+    // A, R, G, B channel bytes for an area (2 bytes per value, big-endian, in 16-bit documents)
+    const channels = (px, bb) => {
+      const n = bb.w * bb.h, ch = [0, 1, 2, 3].map(() => new Uint8Array(n * bpc));
+      if (!n) return ch;
+      if (deep && ND.Deep.is16(px)) {
+        const d = ND.Deep.read16(px, bb.x, bb.y, bb.w, bb.h).data, ord = [3, 0, 1, 2];
+        for (let i = 0; i < n; i++) for (let c = 0; c < 4; c++) { const v = Math.round(Math.max(0, Math.min(1, d[i * 4 + ord[c]])) * 65535); ch[c][i * 2] = v >> 8; ch[c][i * 2 + 1] = v & 255; }
+      } else {
+        const d = U.ctx(px).getImageData(bb.x, bb.y, bb.w, bb.h).data;
+        for (let i = 0, j = 0; i < n; i++, j += 4) { const vals = [d[j + 3], d[j], d[j + 1], d[j + 2]]; for (let c = 0; c < 4; c++) { if (bpc === 2) { ch[c][i * 2] = vals[c]; ch[c][i * 2 + 1] = vals[c]; } else ch[c][i] = vals[c]; } }
+      }
+      return ch;
+    };
     const records = [], lost = []; // bottom → top
     const rec = (g) => {
       for (const n of g.children) {
@@ -403,7 +430,7 @@
       if (r.kind === 'adjust' && r.node.mask) {
         const md = U.ctx(r.node.mask).getImageData(0, 0, W, H).data, m = new Uint8Array(W * H);
         for (let i = 0; i < W * H; i++) m[i] = md[i * 4];
-        r.mask = m;
+        r.mask = bpc === 2 ? Uint8Array.from({ length: W * H * 2 }, (_, k) => m[k >> 1]) : m;
       }
       if (r.kind !== 'layer') { r.rect = { x: 0, y: 0, w: 0, h: 0 }; r.ch = [new Uint8Array(0), new Uint8Array(0), new Uint8Array(0), new Uint8Array(0)]; if (r.mask) r.ch.push(r.mask); continue; }
       // text layers keep their text, font, size and colour (Photoshop re-renders them)
@@ -411,12 +438,7 @@
       const px = bakedPixels(doc, r.node);
       const bb = ND.Sel.contentBBox(px) || { x: 0, y: 0, w: 0, h: 0 };
       r.rect = bb;
-      const n = bb.w * bb.h, ch = [new Uint8Array(n), new Uint8Array(n), new Uint8Array(n), new Uint8Array(n)];
-      if (n) {
-        const d = U.ctx(px).getImageData(bb.x, bb.y, bb.w, bb.h).data;
-        for (let i = 0, j = 0; i < n; i++, j += 4) { ch[0][i] = d[j + 3]; ch[1][i] = d[j]; ch[2][i] = d[j + 1]; ch[3][i] = d[j + 2]; }
-      }
-      r.ch = ch;
+      r.ch = channels(px, bb);
     }
     const li = new W8();
     li.i16(records.length);
@@ -426,7 +448,7 @@
       li.u16(r.ch.length);
       [-1, 0, 1, 2, -2].slice(0, r.ch.length).forEach((id, k) => { li.i16(id); li.u32(2 + r.ch[k].length); });
       li.str('8BIM');
-      const key = r.kind === 'end' ? 'norm' : r.kind === 'group' ? (n.blendMode === 'normal' ? 'pass' : PSD_KEY[n.blendMode] || 'norm') : PSD_KEY[n.blendMode] || 'norm';
+      const key = r.kind === 'end' ? 'norm' : r.kind === 'group' && n.blendMode === 'passthrough' ? 'pass' : PSD_KEY[n.blendMode] || 'norm'; // isolated groups are 'norm'
       li.str(key);
       li.u8(r.kind === 'end' ? 255 : Math.round(n.opacity * 255));
       li.u8(n.clip && r.kind !== 'end' ? 1 : 0);
@@ -448,7 +470,7 @@
 
     const out = new W8();
     out.str('8BPS'); out.u16(1); for (let i = 0; i < 6; i++) out.u8(0);
-    out.u16(3); out.u32(H); out.u32(W); out.u16(8); out.u16(3);
+    out.u16(3); out.u32(H); out.u32(W); out.u16(deep ? 16 : 8); out.u16(3);
     out.u32(0); // colour mode data
     out.u32(0); // image resources
     out.u32(4 + li.len + 4); // layer & mask info length
@@ -457,9 +479,9 @@
     // merged composite (flattened over white)
     const flat = U.canvas(W, H), fx = U.ctx(flat);
     fx.fillStyle = '#fff'; fx.fillRect(0, 0, W, H); fx.drawImage(doc.flatCopy(), 0, 0);
-    const d = fx.getImageData(0, 0, W, H).data;
     out.u16(0);
-    for (let c = 0; c < 3; c++) { const ch = new Uint8Array(W * H); for (let i = 0, j = c; i < ch.length; i++, j += 4) ch[i] = d[j]; out.raw(ch); }
+    const fc = channels(flat, { x: 0, y: 0, w: W, h: H });
+    for (let c = 1; c < 4; c++) out.raw(fc[c]);
     const blob = new Blob(out.chunks, { type: 'image/vnd.adobe.photoshop' });
     blob.lost = lost;
     return blob;

@@ -1,4 +1,4 @@
-/* Neon Draw — layers, history and navigator docker. */
+/* Neon Sparks Draw — layers, history and navigator docker. */
 'use strict';
 (function () {
   const U = ND.U, h = U.h, C = ND.C, App = ND.App;
@@ -8,7 +8,7 @@
     let tab = 'layers';
     const tabs = h('div.nd-tabs');
     const body = h('div.nd-tabbody');
-    [['layers', 'Layers'], ['paths', 'Paths'], ['history', 'History'], ['nav', 'Navigator']].forEach(([id, label]) => {
+    [['layers', 'Layers'], ['channels', 'Channels'], ['paths', 'Paths'], ['history', 'History'], ['nav', 'Navigator']].forEach(([id, label]) => {
       const b = h('button.nd-tab', { type: 'button' }, label);
       b.dataset.id = id;
       b.addEventListener('click', () => { tab = id; render(); });
@@ -35,11 +35,21 @@
       body.append(bar, list);
     }
     App.on('paths', () => { if (tab === 'paths') render(); });
+    // Channels tab: redraw on channel changes, and its thumbnails a moment after the picture changes
+    let chanT = 0;
+    App.on('channels', () => { if (tab === 'channels') render(); });
+    App.on('doc', (t) => {
+      if (tab !== 'channels') return;
+      if (t === 'channels' || t === 'quickmask') render();
+      else if (t === 'history' || t === 'layers' || t === 'resize') { clearTimeout(chanT); chanT = setTimeout(() => { if (tab === 'channels') C.whenFree(body, render); }, 500); }
+    });
+    App.on('docchange', () => { if (tab === 'channels') render(); });
     function render() {
       tabs.querySelectorAll('.nd-tab').forEach((b) => b.classList.toggle('active', b.dataset.id === tab));
       U.clear(body);
       if (tab === 'layers') renderLayers();
       else if (tab === 'paths') renderPaths();
+      else if (tab === 'channels') ND.ChannelsPanel.render(body);
       else if (tab === 'history') renderHistory();
       else renderNav();
     }
@@ -72,7 +82,9 @@
       const d = App.doc, n = d.active;
       if (!propsEl || !n) return;
       U.clear(propsEl);
-      const blend = C.select(null, ND.Blend.MODES.map((m) => ({ value: m.id, label: m.label, group: m.cat })), () => n.blendMode, (v) => d.setProps(n, { blendMode: v }, 'Blend Mode'), 'Blend mode');
+      // groups also offer Pass Through (their layers blend with what's below the group)
+      const modes = (n.isGroup ? [{ value: 'passthrough', label: 'Pass Through' }] : []).concat(ND.Blend.MODES.map((m) => ({ value: m.id, label: m.label, group: m.cat })));
+      const blend = C.select(null, modes, () => n.blendMode, (v) => d.setProps(n, { blendMode: v }, 'Blend Mode'), 'Blend mode');
       const op = C.slider('Opacity', { min: 0, max: 1, step: 0.01, get: () => n.opacity, set: (v) => d.setProps(n, { opacity: v }, 'Layer Opacity'), fmt: (v) => Math.round(v * 100), toValue: (v) => v / 100, unit: '%' });
       const tog = (icon, key, title) => {
         const b = C.iconButton(icon, title, () => d.setProps(n, { [key]: !n[key] }, title), 'tiny');

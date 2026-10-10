@@ -1,4 +1,4 @@
-/* Neon Draw — AI worker: runs ONNX segmentation models off the main thread so the app never freezes.
+/* Neon Sparks Draw — AI worker: runs ONNX segmentation models off the main thread so the app never freezes.
  * Messages: init {ortScript, wasmPaths: {mjs, wasm}}, load {key, bytes, preferGpu}, run {data, dims}, release. */
 /* global importScripts */
 'use strict';

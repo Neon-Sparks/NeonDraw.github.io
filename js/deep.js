@@ -1,4 +1,4 @@
-/* Neon Draw — 16-bit documents. A 16-bit document keeps every layer, mask and work buffer in 16-bit floating
+/* Neon Sparks Draw — 16-bit documents. A 16-bit document keeps every layer, mask and work buffer in 16-bit floating
  * point canvases (where the browser supports them), so painting, blending, opacity, masks, gradients,
  * transforms and layer compositing keep smooth tones without banding. Projects store the 16-bit pixels
  * losslessly; 16-bit TIFF and PNG can be opened / saved. */
@@ -87,6 +87,72 @@
     const ihdr = new Uint8Array(13), iv = new DataView(ihdr.buffer);
     iv.setUint32(0, W); iv.setUint32(4, H); ihdr[8] = 16; ihdr[9] = 6;
     return new Blob([Uint8Array.of(137, 80, 78, 71, 13, 10, 26, 10), chunk('IHDR', ihdr), chunk('sRGB', Uint8Array.of(0)), chunk('IDAT', await ND.Formats.deflate(raw)), chunk('IEND', new Uint8Array(0))], { type: 'image/png' });
+  };
+  /* ---------- adjustments and filters at 16-bit precision ---------- */
+  // apply a colour table (RGBA 8-bit grid N³, built by ND.GPU.lutFor) to float pixels with trilinear interpolation
+  function applyLUT(d, lut, N, op, md) {
+    const L = new Float32Array(lut.length), s = N - 1;
+    for (let i = 0; i < lut.length; i++) L[i] = lut[i] / 255;
+    const idx = (r, g, b) => ((b * N + g) * N + r) * 4;
+    for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+      if (d[i + 3] <= 0) continue;
+      const k = op * (md ? md[p * 4 + 3] / 255 : 1);
+      if (k <= 0) continue;
+      const x = Math.min(Math.max(d[i], 0), 1) * s, y = Math.min(Math.max(d[i + 1], 0), 1) * s, z = Math.min(Math.max(d[i + 2], 0), 1) * s;
+      const x0 = Math.min(s - 1, Math.floor(x)), y0 = Math.min(s - 1, Math.floor(y)), z0 = Math.min(s - 1, Math.floor(z)), fx = x - x0, fy = y - y0, fz = z - z0;
+      for (let c = 0; c < 3; c++) {
+        const c00 = L[idx(x0, y0, z0) + c] * (1 - fx) + L[idx(x0 + 1, y0, z0) + c] * fx, c10 = L[idx(x0, y0 + 1, z0) + c] * (1 - fx) + L[idx(x0 + 1, y0 + 1, z0) + c] * fx;
+        const c01 = L[idx(x0, y0, z0 + 1) + c] * (1 - fx) + L[idx(x0 + 1, y0, z0 + 1) + c] * fx, c11 = L[idx(x0, y0 + 1, z0 + 1) + c] * (1 - fx) + L[idx(x0 + 1, y0 + 1, z0 + 1) + c] * fx;
+        const v = (c00 * (1 - fy) + c10 * fy) * (1 - fz) + (c01 * (1 - fy) + c11 * fy) * fz;
+        d[i + c] = d[i + c] + (v - d[i + c]) * k;
+      }
+    }
+  }
+  // run 8-bit pixel code on high-precision numbers (0–255 with fractions); null if the code can't cope
+  function runFloat(fn, half, w, h) {
+    const f = new Float32Array(half.length);
+    for (let i = 0; i < f.length; i++) f[i] = half[i] * 255;
+    const fake = { data: f, width: w, height: h, colorSpace: 'srgb' };
+    let res;
+    try { res = fn(fake) || fake; } catch (e) { return null; }
+    const out = res.data;
+    for (let i = 0; i < out.length; i += 97) if (out[i] !== out[i]) return null; // NaN: the code needs real 8-bit data
+    const o = new Float32Array(out.length);
+    for (let i = 0; i < out.length; i++) o[i] = Math.min(1, Math.max(0, out[i] / 255));
+    return o;
+  }
+  // an adjustment layer on a 16-bit area; false = let the normal code do it
+  D.adjust16 = function (ctx, n, r, env, maskCanvas) {
+    const img = D.read16(ctx.canvas, 0, 0, r.w, r.h), d = img.data;
+    const md = maskCanvas ? U.ctx(maskCanvas).getImageData(0, 0, r.w, r.h).data : null;
+    if (ND.GPU && ND.GPU.pointwise(n.kind)) applyLUT(d, ND.GPU.lutFor(n, env), ND.GPU.LUTN, n.opacity, md);
+    else {
+      const out = runFloat((im) => ND.Adjust.apply(n.kind, im, n.params, env), d, r.w, r.h);
+      if (!out) return false;
+      for (let i = 0, p = 0; i < d.length; i += 4, p++) { if (d[i + 3] <= 0) continue; const k = n.opacity * (md ? md[p * 4 + 3] / 255 : 1); for (let c = 0; c < 3; c++) d[i + c] += (out[i + c] - d[i + c]) * k; }
+    }
+    ctx.putImageData(img, 0, 0);
+    return true;
+  };
+  // a filter on a 16-bit canvas; null = run it the normal way
+  const NOT_TABLE = ['autocontrast', 'colortoalpha'];
+  D.filter16 = function (f, src, p, env) {
+    const w = src.width, h = src.height, img = D.read16(src), d = img.data;
+    if (f.cat === 'Adjust' && !NOT_TABLE.includes(f.id)) {
+      // colour filters: a colour table built from the filter itself
+      const N = ND.GPU ? ND.GPU.LUTN : 33, t = new ImageData(N * N, N), td = t.data;
+      for (let b = 0; b < N; b++) for (let g = 0; g < N; g++) for (let r = 0; r < N; r++) { const i = ((b * N + g) * N + r) * 4; td[i] = Math.round((r * 255) / (N - 1)); td[i + 1] = Math.round((g * 255) / (N - 1)); td[i + 2] = Math.round((b * 255) / (N - 1)); td[i + 3] = 255; }
+      const res = f.px(t, p, env) || t;
+      applyLUT(d, res.data, N, 1, null);
+    } else {
+      const out = runFloat((im) => f.px(im, p, env), d, w, h);
+      if (!out) return null;
+      for (let i = 0; i < d.length; i++) d[i] = out[i];
+    }
+    const prev = U.colorType; U.colorType = 'float16';
+    const c = U.canvas(w, h); U.colorType = prev;
+    U.ctx(c).putImageData(img, 0, 0);
+    return c;
   };
   ND.Deep = D;
 })();

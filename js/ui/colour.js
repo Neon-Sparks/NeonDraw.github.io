@@ -1,4 +1,4 @@
-/* Neon Draw — colour docker: square / wheel / slider pickers, recent colours and palettes. */
+/* Neon Sparks Draw — colour docker: square / wheel / slider pickers, recent colours and palettes. */
 'use strict';
 (function () {
   const U = ND.U, h = U.h, C = ND.C, App = ND.App;

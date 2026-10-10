@@ -1,4 +1,4 @@
-/* Neon Draw — frame-by-frame animation.
+/* Neon Sparks Draw — frame-by-frame animation.
  * An animated layer has `frames`: { frameNumber: canvas } (keyframes). A keyframe is shown until the next
  * one (like Krita). Switching frames just points `layer.canvas` at the held keyframe, so every tool, filter
  * and undo step works on the frame you see. Layers without frames show on every frame (backgrounds).

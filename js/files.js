@@ -1,4 +1,4 @@
-/* Neon Draw — files on your computer: Open, Save in place, Save as, and recent files.
+/* Neon Sparks Draw — files on your computer: Open, Save in place, Save as, and recent files.
  * Uses the File System Access API (Chrome, Edge, Opera and the installed app) so Ctrl+S writes
  * straight back to the same .ndraw file. Other browsers fall back to the file picker + download. */
 'use strict';
@@ -8,7 +8,7 @@
   const F = { recent: [] };
 
   F.supported = typeof window.showOpenFilePicker === 'function' && typeof window.showSaveFilePicker === 'function';
-  const NDRAW_TYPE = { description: 'Neon Draw project', accept: { 'application/x-neondraw+json': ['.ndraw'] } };
+  const NDRAW_TYPE = { description: 'Neon Sparks Draw project', accept: { 'application/x-neondraw+json': ['.ndraw'] } };
   const OPEN_TYPES = [
     { description: 'Projects and images', accept: { 'application/x-neondraw+json': ['.ndraw'], 'image/vnd.adobe.photoshop': ['.psd', '.psb'], 'image/openraster': ['.ora'], 'application/x-krita': ['.kra'], 'image/tiff': ['.tif', '.tiff'], 'image/*': ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.avif'] } },
   ];

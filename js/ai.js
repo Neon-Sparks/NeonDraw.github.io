@@ -1,4 +1,4 @@
-/* Neon Draw — AI background removal and masking with downloadable models.
+/* Neon Sparks Draw — AI background removal and masking with downloadable models.
  * Models are downloaded once from Hugging Face into this browser's storage (Cache Storage) and then
  * work offline. Inference runs in a Web Worker with ONNX Runtime Web (WebGPU when available, else CPU).
  * Nothing is uploaded: images never leave the computer. */
@@ -75,7 +75,7 @@
   // Why AI can't run here, or '' when it can.
   AI.unsupported = function () {
     if (window.ND_SINGLE_FILE) return 'The single-file version can’t run AI models. Use the web version (e.g. on GitHub Pages) or the installed app.';
-    if (location.protocol === 'file:') return 'Browsers don’t allow AI models from a file opened on disk. Open Neon Draw from its website (e.g. GitHub Pages) or the installed app.';
+    if (location.protocol === 'file:') return 'Browsers don’t allow AI models from a file opened on disk. Open Neon Sparks Draw from its website (e.g. GitHub Pages) or the installed app.';
     if (!window.Worker || !window.caches || !window.WebAssembly) return 'This browser is missing features the AI models need (Web Workers, Cache Storage or WebAssembly).';
     return '';
   };
@@ -393,10 +393,12 @@
    * src: the picture; hole: a canvas whose alpha marks what to remove. The model works on a square around
    * the marked area (enough surroundings to fill from) at 512 × 512; the result is scaled back and blended
    * in with a soft edge. Returns { patch: full-size canvas with only the filled area, seconds }. */
-  AI.inpaint = async function (id, src, hole, status) {
+  // focus (optional): only this part of the hole is worked on and returned; the rest of the hole is still
+  // treated as unknown (used when filling a big area piece by piece)
+  AI.inpaint = async function (id, src, hole, status, focus) {
     status = status || (() => {});
     const t0 = performance.now(), W = src.width, H = src.height, S = 512;
-    const bb = ND.Sel.contentBBox(hole);
+    const bb = ND.Sel.contentBBox(focus || hole);
     if (!bb) throw new Error('nothing is marked to remove');
     await load(id, status);
     const prevType = U.colorType; U.colorType = 'unorm8'; // the model sees 8-bit pixels
@@ -433,6 +435,14 @@
         AI.markCpuOnly(id); resetWorker(); await load(id, status);
         res = await AI.call({ type: 'run', feeds: feeds() });
       }
+      // some graphics drivers return garbage without an error: the parts that were not removed must come back
+      // (almost) unchanged — if they don't, run it again on the CPU and use the CPU for this model from now on
+      const sane = (o) => { let diff = 0, cnt = 0; for (let i = 0; i < n; i += 11) { if (msk[i] === (lama ? 1 : 0)) continue; for (let c = 0; c < 3; c++) diff += Math.abs(o[c * n + i] - pd[i * 4 + c]); cnt += 3; } return !cnt || diff / cnt < 30; };
+      if (res.provider === 'webgpu' && !sane(res.data)) {
+        console.warn('AI remove: the graphics card gave a broken result, using the CPU');
+        AI.markCpuOnly(id); resetWorker(); await load(id, status);
+        res = await AI.call({ type: 'run', feeds: feeds() });
+      }
       const o = res.data, out = U.canvas(S, S), ox = U.ctx(out), oi = ox.createImageData(S, S);
       for (let i = 0; i < n; i++) { for (let c = 0; c < 3; c++) oi.data[i * 4 + c] = o[c * n + i]; oi.data[i * 4 + 3] = 255; }
       ox.putImageData(oi, 0, 0);
@@ -441,10 +451,10 @@
       const patch = U.canvas(W, H), px = U.ctx(patch);
       px.imageSmoothingQuality = 'high';
       px.drawImage(out, 0, 0, sw, sh, x0, y0, cw, ch);
-      const soft = U.canvas(W, H), sx = U.ctx(soft), g = Math.max(2, Math.round(grow / k));
+      const soft = U.canvas(W, H), sx = U.ctx(soft), g = Math.max(2, Math.round(grow / k)), keepArea = focus || hole;
       sx.filter = 'blur(' + Math.max(1, g / 2) + 'px)';
-      for (let a = 0; a < 8; a++) sx.drawImage(hole, Math.cos(a * Math.PI / 4) * g * 0.7, Math.sin(a * Math.PI / 4) * g * 0.7);
-      sx.drawImage(hole, 0, 0);
+      for (let a = 0; a < 8; a++) sx.drawImage(keepArea, Math.cos(a * Math.PI / 4) * g * 0.7, Math.sin(a * Math.PI / 4) * g * 0.7);
+      sx.drawImage(keepArea, 0, 0);
       px.globalCompositeOperation = 'destination-in'; px.drawImage(soft, 0, 0);
       return { patch, rect: { x: x0, y: y0, w: cw, h: ch }, seconds: (performance.now() - t0) / 1000, provider: res.provider };
     } finally { U.colorType = prevType; }

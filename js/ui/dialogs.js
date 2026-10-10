@@ -1,4 +1,4 @@
-/* Neon Draw — modal dialogs. */
+/* Neon Sparks Draw — modal dialogs. */
 'use strict';
 (function () {
   const U = ND.U, h = U.h, C = ND.C, App = ND.App;
@@ -87,11 +87,24 @@
 
   /* ---------------- new document ---------------- */
   D.newDoc = function () {
-    const PRESETS = [
-      ['Full HD', 1920, 1080], ['4K UHD', 3840, 2160], ['Square', 2048, 2048], ['Instagram post', 1080, 1350], ['Phone wallpaper', 1170, 2532],
-      ['A4 @300ppi', 2480, 3508], ['A5 @300ppi', 1748, 2480], ['US Letter @300ppi', 2550, 3300], ['Comic page', 2063, 3131], ['Postcard', 1800, 1200],
-      ['Texture 1K', 1024, 1024], ['Texture 2K', 2048, 2048], ['Pixel art 64', 64, 64], ['Pixel art 128', 128, 128], ['Icon 512', 512, 512], ['YouTube thumbnail', 1280, 720],
-    ];
+    // the most used sizes as buttons; everything else in the dropdown
+    const PRESETS = [['Full HD', 1920, 1080], ['Square', 2048, 2048], ['Instagram post', 1080, 1350], ['Story / Reel / TikTok', 1080, 1920], ['A4 @300ppi', 2480, 3508], ['YouTube thumbnail', 1280, 720]];
+    const SIZES = {
+      'Instagram': [['Post — portrait 4:5', 1080, 1350], ['Post — square', 1080, 1080], ['Post — landscape', 1080, 566], ['Story / Reel', 1080, 1920], ['Profile picture', 320, 320]],
+      'TikTok & Snapchat': [['TikTok video / photo', 1080, 1920], ['Snapchat story', 1080, 1920]],
+      'YouTube': [['Thumbnail', 1280, 720], ['Channel banner', 2560, 1440], ['Video 1080p', 1920, 1080], ['Shorts', 1080, 1920], ['Profile picture', 800, 800]],
+      'Facebook': [['Feed post', 1200, 630], ['Square post', 1080, 1080], ['Story', 1080, 1920], ['Cover photo', 1640, 624], ['Event cover', 1920, 1005]],
+      'X (Twitter) & Threads': [['X post', 1600, 900], ['X header', 1500, 500], ['Threads post', 1080, 1350]],
+      'LinkedIn': [['Post', 1200, 627], ['Square post', 1080, 1080], ['Profile banner', 1584, 396]],
+      'Pinterest': [['Pin 2:3', 1000, 1500], ['Long pin', 1000, 2100], ['Square pin', 1000, 1000]],
+      'Twitch & Discord': [['Twitch banner', 1200, 480], ['Twitch offline screen', 1920, 1080], ['Twitch panel', 320, 160], ['Discord banner', 960, 540], ['Emote / sticker', 512, 512]],
+      'Print @300ppi': [['A3', 3508, 4961], ['A4', 2480, 3508], ['A5', 1748, 2480], ['A6', 1240, 1748], ['US Letter', 2550, 3300], ['US Legal', 2550, 4200], ['Tabloid 11×17"', 3300, 5100], ['Photo 4×6"', 1800, 1200], ['Photo 5×7"', 1500, 2100], ['Photo 8×10"', 2400, 3000], ['Poster 18×24"', 5400, 7200], ['Business card', 1050, 600], ['Greeting card A6 folded', 1748, 2480]],
+      'Comics & books': [['Comic page', 2063, 3131], ['Webtoon panel', 800, 1280], ['Book cover 6×9"', 1800, 2700], ['Children’s book 8.5×8.5"', 2550, 2550], ['Album cover', 3000, 3000]],
+      'Screens & wallpapers': [['iPhone wallpaper', 1170, 2532], ['Android wallpaper', 1440, 3120], ['iPad wallpaper', 2048, 2732], ['Desktop 1080p', 1920, 1080], ['Desktop 1440p', 2560, 1440], ['Desktop 4K', 3840, 2160], ['Ultrawide', 3440, 1440]],
+      'Video': [['720p', 1280, 720], ['1080p Full HD', 1920, 1080], ['4K UHD', 3840, 2160], ['Cinema 2K', 2048, 1080], ['Vertical 1080p', 1080, 1920]],
+      'Games & textures': [['Texture 512', 512, 512], ['Texture 1K', 1024, 1024], ['Texture 2K', 2048, 2048], ['Texture 4K', 4096, 4096], ['App icon', 1024, 1024], ['Icon 512', 512, 512], ['Sprite sheet', 2048, 2048]],
+      'Pixel art': [['16 × 16', 16, 16], ['32 × 32', 32, 32], ['64 × 64', 64, 64], ['128 × 128', 128, 128], ['256 × 256', 256, 256], ['Game Boy screen', 160, 144], ['SNES screen', 256, 224]],
+    };
     const name = h('input.nd-field', { type: 'text', value: 'Untitled' });
     const w = num(1920, { min: 1, max: 16384 }), hh = num(1080, { min: 1, max: 16384 });
     let bgMode = App.state.lastPaper && App.state.lastPaper.type !== 'none' ? 'paper' : 'white';
@@ -107,6 +120,19 @@
     });
     let depth = App.state.newDepth === 16 && ND.Deep.supported() ? 16 : 8;
     const depthSeg = C.segmented([[8, '8-bit'], [16, '16-bit', 'Smoother gradients and edits, twice the memory']], () => depth, (v) => { if (+v === 16 && !ND.Deep.supported()) { App.toast('This browser can’t do 16-bit canvases yet — use Chrome or Edge'); return; } depth = +v; App.set('newDepth', depth); info(); });
+    // dropdown with every size, grouped
+    const sel = h('select.nd-field.nd-newsize', { title: 'Sizes for social media, print, screens, video and games' });
+    sel.appendChild(h('option', { value: '' }, 'More sizes…'));
+    Object.keys(SIZES).forEach((g) => { const og = h('optgroup', { label: g }); SIZES[g].forEach(([n, pw, ph], i) => og.appendChild(h('option', { value: g + '|' + i }, n + ' — ' + pw + ' × ' + ph))); sel.appendChild(og); });
+    sel.addEventListener('change', () => {
+      if (!sel.value) return;
+      const [g, i] = sel.value.split('|'), [n, pw, ph] = SIZES[g][+i];
+      w.value = pw; hh.value = ph;
+      if (!name.value || name.value === 'Untitled' || name.dataset.auto) { name.value = g.replace(/ @300ppi| & .*/, '') + ' ' + n.replace(/ —.*/, ''); name.dataset.auto = '1'; }
+      chips.querySelectorAll('.nd-chipbtn').forEach((q) => q.classList.remove('active'));
+      info();
+    });
+    chips.appendChild(sel);
     const swapB = C.button('⇄ Portrait / landscape', () => { const t = w.value; w.value = hh.value; hh.value = t; info(); }, { cls: 'sm' });
     const inf = h('div.nd-hint');
     const info = () => { const mp = (w.value * hh.value) / 1e6; inf.textContent = (+w.value) + ' × ' + (+hh.value) + ' px · ' + mp.toFixed(1) + ' MP · about ' + U.fmtBytes(w.value * hh.value * (depth === 16 ? 8 : 4)) + ' per layer' + (mp > 20 ? ' — large canvases are slower' : ''); };
@@ -274,25 +300,25 @@
       ['Arrow keys', 'Nudge layer with the Move tool (Shift ×10)'], ['Enter · Esc', 'Apply · cancel transforms, crops, curves and text'],
       ['Two-finger tap', 'Undo (touch screens)'], ['Pinch', 'Zoom & pan'],
     ];
-    D.modal('Neon Draw — shortcuts & tips', h('div', h('div.nd-help-grid', ...rows.flatMap(([k, v]) => [h('kbd', k), h('span', v)])),
+    D.modal('Neon Sparks Draw — shortcuts & tips', h('div', h('div.nd-help-grid', ...rows.flatMap(([k, v]) => [h('kbd', k), h('span', v)])),
       h('p.nd-hint', 'Graphics tablets: pressure, tilt and the pen eraser end are supported. Your work autosaves in this browser every 30 seconds, and projects (.ndraw) keep layers. Use File ▸ Export for PNG, JPEG, WebP, layered PSD or OpenRaster (.ora, opens in Krita/GIMP). File ▸ Open reads Photoshop .psd files with their layers, groups and masks.')), [{ label: 'Close', primary: true }], { wide: true, noFocus: true });
   };
   D.about = function () {
-    D.modal('About Neon Draw', h('div', h('p', 'Neon Draw is a layered painting app that runs entirely in your browser — no install and no uploads. Open index.html from disk or put the folder on any web host.'),
+    D.modal('About Neon Sparks Draw', h('div', h('p', 'Neon Sparks Draw is a layered painting app that runs entirely in your browser — no install and no uploads. Open index.html from disk or put the folder on any web host.'),
       h('p.nd-hint', ND.Adjust.KINDS.length + ' adjustment & fill layers · ' + Object.keys(ND.Effects.LABELS).length + ' layer effects · ' + ND.Presets.LIST.length + ' brush presets · ' + ND.Brush.ENGINES.length + ' brush engines · ' + ND.Tips.list.length + ' tips · ' + ND.Textures.list.length + ' paper textures · ' + ND.Patterns.SPRITES.length + ' scatter patterns · ' + ND.Patterns.TILES.length + ' tiling patterns · ' + ND.Stamps.list.length + ' stamps · ' + ND.Filters.list.length + ' filters · ' + ND.Blend.MODES.length + ' blend modes')), [{ label: 'Close', primary: true }]);
   };
   D.installHelp = function (fromDisk) {
     const steps = fromDisk
-      ? [h('p', 'This copy of Neon Draw is running from a file (from disk, or the single-file version). That works fine, but browsers only install apps from a website.'),
+      ? [h('p', 'This copy of Neon Sparks Draw is running from a file (from disk, or the single-file version). That works fine, but browsers only install apps from a website.'),
         h('p', 'Upload the folder to GitHub Pages (see DEPLOY.md) or any web host, open it there, and an “Install app” button appears in the top bar.')]
       : [h('p', 'Your browser has not offered installation yet. You can usually install from its menu:'),
         h('ul.nd-list',
-          h('li', h('b', 'Chrome / Edge (Windows, Mac, Linux, Android): '), 'the install icon at the right of the address bar, or menu ⋮ ▸ “Install Neon Draw” / “Apps ▸ Install this site as an app”.'),
+          h('li', h('b', 'Chrome / Edge (Windows, Mac, Linux, Android): '), 'the install icon at the right of the address bar, or menu ⋮ ▸ “Install Neon Sparks Draw” / “Apps ▸ Install this site as an app”.'),
           h('li', h('b', 'Safari on iPhone / iPad: '), 'Share button ▸ “Add to Home Screen”.'),
           h('li', h('b', 'Safari on Mac: '), 'File ▸ “Add to Dock”.'),
-          h('li', h('b', 'Firefox: '), 'desktop Firefox can’t install web apps, but Neon Draw still works offline in a tab after the first visit.')),
+          h('li', h('b', 'Firefox: '), 'desktop Firefox can’t install web apps, but Neon Sparks Draw still works offline in a tab after the first visit.')),
         h('p.nd-hint', 'Installed, it opens in its own window, works without internet, and can open .ndraw, .psd, .ora and image files directly.')];
-    D.modal('Install Neon Draw', h('div', ...steps), [{ label: 'Close', primary: true }], { noFocus: true });
+    D.modal('Install Neon Sparks Draw', h('div', ...steps), [{ label: 'Close', primary: true }], { noFocus: true });
   };
   D.recovered = function (doc, n) {
     D.modal('Welcome back', h('p', n > 1 ? 'Your last session was restored from autosave: ' + n + ' documents, one per tab at the top.' : 'Your last session (“' + doc.name + '”, ' + doc.width + ' × ' + doc.height + ') was restored from autosave.'), [

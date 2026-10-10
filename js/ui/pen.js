@@ -1,4 +1,4 @@
-/* Neon Draw — Pen tool, path commands and vector shape layers.
+/* Neon Sparks Draw — Pen tool, path commands and vector shape layers.
  * Pen: click = corner point, drag = smooth point, click the first point = close, Enter / Esc = finish,
  * Backspace = delete the last / selected point. Editing: drag points and handles; Alt+click a point
  * toggles corner / smooth; Alt+drag a handle breaks the symmetry; click a segment to add a point;

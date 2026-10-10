@@ -1,4 +1,4 @@
-/* Neon Draw — more scatter sprites and seamless tiles (added to the libraries in patterns.js).
+/* Neon Sparks Draw — more scatter sprites and seamless tiles (added to the libraries in patterns.js).
  * Sprites: { name, rot: 'random' | 'upright' | 'direction', v: variants, tintable?, make(rng) → canvas }
  * Tiles:   { name, mono?, make() → canvas } — draw anything that crosses an edge again on the other side. */
 'use strict';

@@ -1,4 +1,4 @@
-/* Neon Draw — Select and Mask workspace: refine a selection's edge with a live preview, then
+/* Neon Sparks Draw — Select and Mask workspace: refine a selection's edge with a live preview, then
  * output it as a selection, a layer mask, or a new (optionally decontaminated) layer. */
 'use strict';
 (function () {

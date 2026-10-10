@@ -1,4 +1,4 @@
-/* Neon Draw — AI remove tool: paint over something (or select it) and an AI model fills the area with what
+/* Neon Sparks Draw — AI remove tool: paint over something (or select it) and an AI model fills the area with what
  * would be behind it. Runs on your computer (MI-GAN or LaMa, downloaded once). */
 'use strict';
 (function () {
@@ -39,7 +39,7 @@
     const why = AI.unsupported();
     if (why) { ND.Dialogs.modal('AI remove', U.h('p', why), [{ label: 'Close', primary: true }]); return null; }
     const id = AI.INPAINT.includes(S().aiInpaint) ? S().aiInpaint : 'migan';
-    if (await AI.isDownloaded(id)) return id;
+    if (!S().aiInpaintAsk && (await AI.isDownloaded(id))) return id;
     return ND.AIUI.choose('AI remove — choose a model', 'Download and remove', null, AI.INPAINT, 'aiInpaint');
   }
   // Remove what is painted (or, with fromSelection, what is selected)

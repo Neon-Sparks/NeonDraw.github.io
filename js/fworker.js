@@ -1,4 +1,4 @@
-/* Neon Draw — runs filters in a background worker when the browser allows it (web / installed app);
+/* Neon Sparks Draw — runs filters in a background worker when the browser allows it (web / installed app);
  * otherwise (file:// or the single-file version) they simply run on the page as before. */
 'use strict';
 (function () {
@@ -23,7 +23,7 @@
    * o.cache: the source canvas won't change between calls (live previews), so it is sent only once. */
   F.runAsync = async function (id, src, params, env, o) {
     o = o || {};
-    if (!W.available()) return F.run(id, src, params, env);
+    if (!W.available() || (ND.Deep && ND.Deep.is16(src))) return F.run(id, src, params, env); // 16-bit stays on the page (the worker is 8-bit)
     try {
       await start();
       const msg = { type: 'run', fid: id, params: Object.assign({}, params), env: { fg: env && env.fg, bg: env && env.bg } };

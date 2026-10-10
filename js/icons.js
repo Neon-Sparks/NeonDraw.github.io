@@ -1,4 +1,4 @@
-/* Neon Draw — inline SVG icon set (24x24, stroke based, inherits currentColor). */
+/* Neon Sparks Draw — inline SVG icon set (24x24, stroke based, inherits currentColor). */
 'use strict';
 (function () {
   const P = {
@@ -74,6 +74,7 @@
     removebg: '<rect x="3.5" y="3.5" width="17" height="17" rx="2" stroke-dasharray="3 2"/><path d="M8 18c0-3 2-5 4-5s4 2 4 5"/><circle cx="12" cy="9" r="2.6"/>',
     download: '<path d="M12 4v11"/><path d="M7 10.5l5 5 5-5"/><path d="M5 19.5h14"/>',
     refresh: '<path d="M19.5 8A8 8 0 0 0 5 7.5"/><path d="M4.5 3.5v4h4"/><path d="M4.5 16a8 8 0 0 0 14.5.5"/><path d="M19.5 20.5v-4h-4"/>',
+    camove: '<path d="M5 12h10M12 9l3 3-3 3"/><rect x="3" y="5" width="6" height="6" rx="1" stroke-dasharray="2 2"/><path d="M18 3l.8 1.8 1.8.8-1.8.8L18 8.2l-.8-1.8-1.8-.8 1.8-.8z" fill="currentColor" stroke="none"/><rect x="15" y="15" width="6" height="6" rx="1"/>',
     airemove: '<path d="M4 20l7-7"/><path d="M9.5 11.5l3 3"/><path d="M13 4l1.2 2.8L17 8l-2.8 1.2L13 12l-1.2-2.8L9 8l2.8-1.2z" fill="currentColor" stroke="none"/><path d="M19 13l.7 1.6 1.6.7-1.6.7L19 17.6l-.7-1.6-1.6-.7 1.6-.7z" fill="currentColor" stroke="none"/>',
     play: '<path d="M7 4.5v15l12-7.5z" fill="currentColor"/>',
     first: '<path d="M6 5v14"/><path d="M18 5l-9 7 9 7z" fill="currentColor"/>',

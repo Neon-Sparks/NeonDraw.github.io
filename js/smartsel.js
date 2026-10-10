@@ -1,4 +1,4 @@
-/* Neon Draw — smart selection: quick-select brush, Select Subject and Remove Background.
+/* Neon Sparks Draw — smart selection: quick-select brush, Select Subject and Remove Background.
  * Works without AI models. The image is shrunk and lightly smoothed, then every pixel is claimed by
  * whichever seeds (object or background) can reach it most cheaply. Crossing a strong colour edge is
  * very expensive while texture and gentle gradients are cheap (edge cost grows with the cube of the

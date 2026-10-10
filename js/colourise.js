@@ -1,4 +1,4 @@
-/* Neon Draw — Colourise mask ("lazy brush") for line art.
+/* Neon Sparks Draw — Colourise mask ("lazy brush") for line art.
  * Scribbled colour hints fill the areas they are in, up to (and just under) the lines. Lines are thickened
  * by the gap-closing radius first so small gaps in the line art don't leak. Linear-time flood fills. */
 'use strict';

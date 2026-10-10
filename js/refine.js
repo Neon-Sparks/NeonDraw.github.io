@@ -1,4 +1,4 @@
-/* Neon Draw — Select and Mask maths: smooth, edge refinement (hair & fur), feather, contrast,
+/* Neon Sparks Draw — Select and Mask maths: smooth, edge refinement (hair & fur), feather, contrast,
  * shift edge, and colour decontamination. Works on Float32 alpha (0..1) plus the image's RGBA.
  *
  * Edge refinement: inside a band of `radius` pixels around the selection edge, each pixel is

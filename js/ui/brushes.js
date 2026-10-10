@@ -1,4 +1,4 @@
-/* Neon Draw — brush docker: preset browser with live stroke previews + full brush settings. */
+/* Neon Sparks Draw — brush docker: preset browser with live stroke previews + full brush settings. */
 'use strict';
 (function () {
   const U = ND.U, h = U.h, C = ND.C, App = ND.App;
@@ -13,21 +13,30 @@
     search.addEventListener('input', () => { query = search.value.toLowerCase(); renderGrid(); });
     search.addEventListener('keydown', (e) => e.stopPropagation());
     const grid = h('div.nd-presets');
-    const fileIn = h('input', { type: 'file', accept: '.json', style: { display: 'none' } });
-    fileIn.addEventListener('change', () => { if (fileIn.files[0]) App.importBrushes(fileIn.files[0]); fileIn.value = ''; });
+    const fileIn = h('input', { type: 'file', multiple: true, accept: '.json,.abr,.kpp,.bundle,.gbr,.gih,.png,.zip', style: { display: 'none' } });
+    fileIn.addEventListener('change', () => { if (fileIn.files.length) App.importAnyBrushes(Array.from(fileIn.files)); fileIn.value = ''; });
     const actions = h('div.nd-row.tight',
       C.button('Save brush', () => { const n = window.prompt('Name for this brush preset', App.state.brushName.replace(/ \(mine\)$/, '') + ' (mine)'); if (n) App.saveBrushPreset(n.trim()); }, { icon: 'save', cls: 'sm', title: 'Save the current settings as a preset' }),
-      C.button('Import', () => fileIn.click(), { cls: 'sm', title: 'Import brush presets (.json)' }),
+      C.button('Import', () => fileIn.click(), { cls: 'sm', title: 'Import brushes: this app’s .json, Photoshop .abr, Krita .kpp / .bundle, GIMP .gbr / .gih, .png tips' }),
       C.button('Export', () => App.exportBrushes(), { cls: 'sm', title: 'Export your brush presets' }), fileIn);
-    const presetsBody = h('div', chips, h('div.nd-row', search), grid, actions);
+    // an imported set is selected: offer to remove it
+    const setBar = h('div.nd-row.tight');
+    const presetsBody = h('div', chips, h('div.nd-row', search), setBar, grid, actions);
     root.appendChild(C.section('presets', 'Brush presets', presetsBody));
 
     const settings = h('div.nd-brush-settings');
     root.appendChild(C.section('brushsettings', 'Brush settings', settings));
 
-    function cats() { return ['All'].concat(App.customPresets.length ? ['My Brushes'] : [], ND.Presets.CATS); }
+    function cats() { return ['All'].concat(App.customPresets.some((p) => !p.imported) ? ['My Brushes'] : [], App.brushSets(), ND.Presets.CATS); }
     function renderChips() {
+      if (App.state.presetCat && App.state.presetCat !== cat && cats().includes(App.state.presetCat)) cat = App.state.presetCat;
+      if (!cats().includes(cat)) cat = 'All';
       U.clear(chips);
+      U.clear(setBar);
+      if (App.brushSets().includes(cat)) {
+        const n = App.customPresets.filter((p) => p.imported === cat).length;
+        setBar.append(h('span.nd-hint', n + ' imported brush' + (n === 1 ? '' : 'es')), C.button('Remove this set', () => { if (window.confirm('Remove the brush set “' + cat + '” and its tips?')) App.deleteBrushSet(cat); }, { cls: 'sm', icon: 'trash' }));
+      }
       cats().forEach((c) => {
         const b = h('button.nd-chipbtn' + (c === cat ? '.active' : ''), { type: 'button' }, c);
         b.addEventListener('click', () => { cat = c; App.state.presetCat = c; renderChips(); renderGrid(); });
@@ -90,7 +99,7 @@
     App.on('brush', () => grid.querySelectorAll('.nd-preset').forEach((t) => t.classList.toggle('active', t.title.split(' — ')[0] === App.state.brushName)));
 
     /* ----- settings ----- */
-    let ctrls = [], lastEngine = null, lastPattern = null;
+    let ctrls = [], lastEngine = null, lastPattern = null, lastCurves = false;
     const B = () => App.state.brush;
     const sl = (label, key, min, max, o) => { const c = C.slider(label, Object.assign({ min, max, get: () => B()[key], set: (v) => App.setBrush({ [key]: v }) }, o || {})); ctrls.push(c); return c; };
     const pct = (o) => Object.assign({ step: 0.01, fmt: (v) => Math.round(v * 100), toValue: (v) => v / 100, unit: '%' }, o || {});
@@ -102,7 +111,7 @@
       U.clear(settings);
       ctrls = [];
       const b = B(), e = b.engine;
-      lastEngine = e; lastPattern = b.pattern;
+      lastEngine = e; lastPattern = b.pattern; lastCurves = !!(b.sizeCurve || b.opacityCurve || b.flowCurve);
       const isDab = ['pixel', 'airbrush', 'watercolor', 'mixer', 'eraser'].includes(e);
       settings.appendChild(grp('Engine',
         se('Engine', 'engine', ND.Brush.ENGINES.map((q) => [q.id, q.label]), 'How the brush lays down paint', true),
@@ -129,16 +138,21 @@
       if (eng.length) settings.appendChild(grp('Engine options', ...eng));
 
       settings.appendChild(grp('Pressure & dynamics',
-        h('div.nd-row.tight', ck('Pressure → size', 'pressureSize'), ck('Pressure → opacity', 'pressureOpacity')),
+        h('div.nd-row.tight', ck('Pressure → size', 'pressureSize'), ck('Pressure → opacity', 'pressureOpacity'), ck('Pressure → flow', 'pressureFlow', 'Light pressure lays down less paint per dab (Photoshop “Transfer”)')),
         sl('Min size', 'minSize', 0, 1, pct({ title: 'Size at the lightest pressure' })),
         curveGraph(),
+        // imported brushes can bring their own curve for size, opacity or flow
+        B().sizeCurve || B().opacityCurve || B().flowCurve ? h('div.nd-row.tight', h('span.nd-hint', 'This brush brings its own pressure curves (from the imported brush).'), C.button('Use my curve', () => { App.setBrush({ sizeCurve: null, opacityCurve: null, flowCurve: null }); renderSettings(); }, { cls: 'sm', title: 'Use the curve above for everything instead' })) : null,
         e !== 'bristle' ? sl('Taper in', 'taper', 0, 400, { unit: 'px', title: 'Stroke starts thin and grows over this distance' }) : null,
         ['pixel', 'airbrush', 'watercolor', 'mixer', 'eraser'].includes(e) ? sl('Taper out', 'taperOut', 0, 400, { unit: 'px', title: 'The end of the stroke thins out when you lift the pen' }) : null,
         sl('Speed thinning', 'speedSize', -1, 1, pct({ title: 'Fast strokes get thinner (handy with a mouse)' })),
         sl('Size jitter', 'sizeJitter', 0, 1, pct()),
         sl('Opacity jitter', 'opacityJitter', 0, 1, pct()),
         isDab ? sl('Angle jitter', 'angleJitter', 0, 1, pct()) : null,
-        isDab || e === 'spray' ? sl('Scatter', 'scatter', 0, 3, pct()) : null));
+        isDab ? sl('Roundness jitter', 'roundnessJitter', 0, 1, pct({ title: 'Each dab gets a little flatter at random' })) : null,
+        isDab || e === 'spray' ? sl('Scatter', 'scatter', 0, 3, pct()) : null,
+        isDab ? (() => { const c = C.select('Scatter direction', [['both', 'Both ways'], ['across', 'Across the stroke']], () => (B().scatterBoth === false ? 'across' : 'both'), (v) => App.setBrush({ scatterBoth: v !== 'across' }), 'Photoshop scatters across the stroke unless “Both axes” is on'); ctrls.push(c); return c; })() : null,
+        isDab ? sl('Count', 'count', 1, 16, { step: 1, title: 'Dabs placed at each step (with scatter: a cloud of marks)' }) : null));
 
       if (!ND.Brush.DIRECT[e] && e !== 'clone') {
         settings.appendChild(grp('Colour dynamics',
@@ -265,7 +279,9 @@
     }
     App.on('brush', () => {
       const b = B();
-      if (b.engine !== lastEngine || b.pattern !== lastPattern) renderSettings();
+      // rebuild when the engine, pattern or own pressure curves change (the curve note comes and goes)
+      const curves = !!(b.sizeCurve || b.opacityCurve || b.flowCurve);
+      if (b.engine !== lastEngine || b.pattern !== lastPattern || curves !== lastCurves) { lastCurves = curves; renderSettings(); }
       else ctrls.forEach((c) => c.refresh && c.refresh());
     });
     App.on('state', () => ctrls.forEach((c) => c.refresh && c.refresh()));

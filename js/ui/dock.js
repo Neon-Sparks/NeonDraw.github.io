@@ -1,12 +1,12 @@
-/* Neon Draw — right-hand panel area: one or two columns, and drag & drop of panels between them.
- * Panels (Colour, Brush presets, Brush settings, Adjustments, Properties) are dragged by their title
+/* Neon Sparks Draw — right-hand panel area: one or two columns, and drag & drop of panels between them.
+ * Panels (Colour, Brush presets, Brush settings, Adjustments, Properties, Gradients, Retouch, Actions) are dragged by their title
  * bar; the Layers panel by the grip in its tab bar (it always sits at the bottom of its column). */
 'use strict';
 (function () {
   const U = ND.U, h = U.h, App = ND.App;
   const D = {};
-  const IDS = ['colour', 'presets', 'brushsettings', 'adjustments', 'properties'];
-  const DEFAULT = () => ({ col1: ['colour', 'presets', 'brushsettings'], col2: ['adjustments', 'properties'], layers: 2 });
+  const IDS = ['colour', 'presets', 'brushsettings', 'adjustments', 'properties', 'gradients', 'retouch', 'actions'];
+  const DEFAULT = () => ({ col1: ['colour', 'presets', 'brushsettings'], col2: ['adjustments', 'properties', 'gradients', 'retouch', 'actions'], layers: 2 });
 
   // the saved arrangement, repaired if panels were added or removed since it was saved
   D.arrangement = function () {
@@ -135,8 +135,15 @@
       D.layout();
     }
     // section title bars start a drag; a plain click still collapses / expands
+    // little locks on the panel title bars: stop panels being dragged by accident
+    const addLocks = () => dock.querySelectorAll('.nd-sec-head').forEach((hd) => {
+      let b = hd.querySelector('.nd-lockbtn');
+      if (!b) { b = h('button.nd-lockbtn', { type: 'button' }); b.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); App.set('lockPanels', !App.state.lockPanels); App.emit('locks'); }); b.addEventListener('pointerdown', (e) => e.stopPropagation()); hd.appendChild(b); }
+      U.clear(b); b.appendChild(ND.icon(App.state.lockPanels ? 'lock' : 'unlock', 11)); b.title = App.state.lockPanels ? 'Panels locked — click to allow dragging' : 'Lock the panels in place'; b.classList.toggle('on', !!App.state.lockPanels);
+    });
+    addLocks(); App.on('locks', addLocks); setTimeout(addLocks, 200);
     dock.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0) return;
+      if (e.button !== 0 || App.state.lockPanels) return;
       const head = e.target.closest('.nd-sec-head');
       if (head && !e.target.closest('button,input,select') && dock.contains(head)) {
         const sec = head.closest('.nd-section');

@@ -4,11 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="theme-color" content="#141519" />
-  <title>Neon Draw — Paint in Your Browser</title>
-  <meta name="description" content="Neon Draw — layered painting and photo editing in your browser. Works offline and installs as an app." />
+  <title>Neon Sparks Draw — Paint in Your Browser</title>
+  <meta name="description" content="Neon Sparks Draw — layered painting and photo editing in your browser. Works offline and installs as an app." />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-title" content="Neon Draw" />
+  <meta name="apple-mobile-web-app-title" content="Neon Sparks Draw" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="icon" type="image/png" sizes="48x48" href="icons/favicon-48.png" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
@@ -18,7 +18,7 @@
 <body class="nd-loading">
   <div id="nd-app">
     <header class="nd-menubar">
-      <span class="nd-logo">Neon<b>Draw</b></span>
+      <span class="nd-logo">Neon Sparks <b>Draw</b></span>
       <nav id="nd-menus" class="nd-menus"></nav>
       <div class="nd-menubar-right">
         <button id="nd-docname" class="nd-docname" type="button" title="Click to rename the document"></button>
@@ -43,13 +43,16 @@
   </div>
   <input id="nd-open" type="file" accept="image/*,.ndraw,.pigment,.ora,.psd,.psb,.kra,.tif,.tiff,application/json" hidden />
   <input id="nd-import" type="file" accept="image/*" multiple hidden />
-  <noscript><p style="color:#fff;padding:2em">Neon Draw needs JavaScript enabled.</p></noscript>
+  <noscript><p style="color:#fff;padding:2em">Neon Sparks Draw needs JavaScript enabled.</p></noscript>
 
   <!-- Plain scripts (no modules) so the app also runs when index.html is opened straight from disk. Order matters. -->
   <script src="js/util.js"></script>
+  <script src="js/lang.js"></script>
+  <script src="js/lang-ui.js"></script>
   <script src="js/icons.js"></script>
   <script src="js/blend.js"></script>
   <script src="js/gpu.js"></script>
+  <script src="js/gpufx.js"></script>
   <script src="js/document.js"></script>
   <script src="js/effects.js"></script>
   <script src="js/adjust.js"></script>
@@ -65,8 +68,10 @@
   <script src="js/anim.js"></script>
   <script src="js/smart.js"></script>
   <script src="js/formats.js"></script>
+  <script src="js/brushimport.js"></script>
   <script src="js/colour.js"></script>
   <script src="js/deep.js"></script>
+  <script src="js/channels.js"></script>
   <script src="js/tips.js"></script>
   <script src="js/patterns.js"></script>
   <script src="js/patterns2.js"></script>
@@ -102,6 +107,12 @@
   <script src="js/ui/timeline.js"></script>
   <script src="js/ui/tabs.js"></script>
   <script src="js/ui/airemove.js"></script>
+  <script src="js/ui/options.js"></script>
+  <script src="js/ui/aiextend.js"></script>
+  <script src="js/ui/panels2.js"></script>
+  <script src="js/ui/actions.js"></script>
+  <script src="js/ui/channels.js"></script>
+  <script src="js/ui/i18n.js"></script>
   <script src="js/main.js"></script>
 </body>
 </html>

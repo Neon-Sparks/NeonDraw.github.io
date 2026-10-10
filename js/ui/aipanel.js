@@ -1,4 +1,4 @@
-/* Neon Draw — AI user interface: model picker, Help ▸ AI models manager, and the AI commands
+/* Neon Sparks Draw — AI user interface: model picker, Help ▸ AI models manager, and the AI commands
  * (remove background, subject / background masks, AI selections). */
 'use strict';
 (function () {
@@ -81,7 +81,7 @@
       ...upCards,
       h('h4.nd-ai-sec', 'Object removal (AI remove tool)'),
       ...inCards,
-      h('div.nd-hint', 'Speed: with a graphics card that supports WebGPU (Chrome, Edge) a picture takes about a second; on the CPU expect 2–3 s for MODNet and 10–40 s for ISNet / RMBG. ISNet always uses the CPU for now. If a model ever fails on the graphics card, Neon Draw switches it to the CPU automatically.'),
+      h('div.nd-hint', 'Speed: with a graphics card that supports WebGPU (Chrome, Edge) a picture takes about a second; on the CPU expect 2–3 s for MODNet and 10–40 s for ISNet / RMBG. ISNet always uses the CPU for now. If a model ever fails on the graphics card, Neon Sparks Draw switches it to the CPU automatically.'),
       usage);
     if (why) cards.concat(upCards, inCards).forEach((c) => c.querySelectorAll('button').forEach((b) => { b.disabled = true; }));
     showUsage();
@@ -208,7 +208,9 @@
     const pixelLayers = d.allLayers().filter((l) => l.isPixel);
     const scope = pixelLayers.length > 1 ? C.segmented([['one', 'Active layer with AI'], ['all', 'Every paint layer with AI (slower)']], () => (every ? 'all' : 'one'), (v) => { every = v === 'all'; }) : null;
     const extra = h('div.nd-col', scope, h('div.nd-hint', 'The whole document gets bigger. ' + (scope ? 'Other layers and masks are enlarged smoothly without AI. ' : '') + 'Undo puts it back. Speed: about 1–2 s per 100 × 100 px area on the CPU, much faster with a WebGPU graphics card.'));
-    const id = await UI.choose('Enlarge with AI', 'Enlarge', extra, AI.UPSCALERS, 'aiUpscaler');
+    // Options ▸ AI: a chosen default model skips the question (whole picture / active layer)
+    const skip = App.state.aiUpscaleAsk === false && AI.UPSCALERS.includes(App.state.aiUpscaler) && !AI.unsupported() && (await AI.isDownloaded(App.state.aiUpscaler));
+    const id = skip ? App.state.aiUpscaler : await UI.choose('Enlarge with AI', 'Enlarge', extra, AI.UPSCALERS, 'aiUpscaler');
     if (!id) return;
     const s = AI.MODELS[id].scale;
     if (d.width * d.height * s * s > AI.MAX_UPSCALE_PIXELS) return App.toast('The result would be ' + d.width * s + ' × ' + d.height * s + ' px — too big. Crop or shrink the picture first (limit about 40 megapixels).', 6000);

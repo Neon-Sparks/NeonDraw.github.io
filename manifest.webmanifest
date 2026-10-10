@@ -1,6 +1,6 @@
 {
-  "name": "Neon Draw",
-  "short_name": "Neon Draw",
+  "name": "Neon Sparks Draw",
+  "short_name": "Neon Sparks",
   "description": "Layered painting and photo editing in your browser — brushes, adjustment layers, masks, retouching. Works offline.",
   "id": "./",
   "start_url": "./index.html",

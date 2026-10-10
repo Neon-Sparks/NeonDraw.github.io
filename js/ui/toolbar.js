@@ -1,4 +1,4 @@
-/* Neon Draw — toolbox (left), tool options bar (top) and status bar (bottom). */
+/* Neon Sparks Draw — toolbox (left), tool options bar (top) and status bar (bottom). */
 'use strict';
 (function () {
   const U = ND.U, h = U.h, C = ND.C, App = ND.App;
@@ -89,8 +89,13 @@
   function dragToolbox(box, head) {
     let drag = null, zone = null;
     const hint = h('div.nd-tb-snap');
+    // little lock: stops the tool panel being dragged by accident
+    const lock = h('button.nd-lockbtn', { type: 'button' });
+    const syncLock = () => { U.clear(lock); lock.appendChild(ND.icon(App.state.lockToolbox ? 'lock' : 'unlock', 12)); lock.title = App.state.lockToolbox ? 'Tool panel locked — click to allow dragging' : 'Lock the tool panel in place'; lock.classList.toggle('on', !!App.state.lockToolbox); head.classList.toggle('locked', !!App.state.lockToolbox); };
+    lock.addEventListener('click', (e) => { e.stopPropagation(); App.set('lockToolbox', !App.state.lockToolbox); App.emit('locks'); });
+    head.appendChild(lock); syncLock(); App.on('locks', syncLock);
     head.addEventListener('pointerdown', (e) => {
-      if (e.target.closest('button') || e.button !== 0) return;
+      if (e.target.closest('button') || e.button !== 0 || App.state.lockToolbox) return;
       const main = box.parentNode, mr = main.getBoundingClientRect(), br = box.getBoundingClientRect();
       drag = { sx: e.clientX, sy: e.clientY, ox: e.clientX - br.left, oy: e.clientY - br.top, mr, moved: false, startX: br.left - mr.left, startY: br.top - mr.top };
       try { head.setPointerCapture(e.pointerId); } catch (err) { /* synthetic */ }
@@ -147,7 +152,7 @@
     App.on('stamps', () => { if (App.state.tool === 'stamp') render(); });
     App.on('patterns', () => { if (App.state.tool === 'fill') render(); });
     App.on('paths', () => { if (App.state.tool === 'pen') C.whenFree(optEl, render); });
-    App.on('doc', (t) => { if ((t === 'active' || t === 'layers') && App.state.tool === 'pen') C.whenFree(optEl, render); });
+    App.on('doc', (t) => { if ((t === 'active' || t === 'layers') && (App.state.tool === 'pen' || App.state.tool === 'brush')) C.whenFree(optEl, render); });
     App.on('state', () => controls.forEach((c) => c.refresh && c.refresh()));
     render();
   };
@@ -175,7 +180,7 @@
       chip.refresh();
       chip.addEventListener('click', () => { const p = document.querySelector('.nd-presets'); if (p) p.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); });
       add(chip);
-      add(brushSlider('Size', 'size', 1, 1000, { log: true, unit: 'px', fmt: (v) => (v < 10 ? v.toFixed(1) : Math.round(v)) }));
+      add(brushSlider('Size', 'size', 1, 1000, { log: true, unit: 'px', fmt: (v) => (v < 10 ? v.toFixed(1) : Math.round(v)) }), brushSlider('Softness', 'softness', 0, 1, Object.assign({ step: 0.01, title: 'Soft edge (Ctrl+drag sideways on the canvas)' }, pct)));
       add(brushSlider('Opacity', 'opacity', 0.01, 1, Object.assign({ step: 0.01 }, pct)));
       add(brushSlider('Flow', 'flow', 0.01, 1, Object.assign({ step: 0.01 }, pct)));
       add(brushSlider('Smoothing', 'stabilizer', 0, 1, Object.assign({ step: 0.01 }, pct)));
@@ -187,6 +192,8 @@
         er.refresh = () => er.classList.toggle('active', S().eraserMode);
         er.refresh();
         add(er);
+        // per layer: start every stroke with the colour under the brush (on for a frequency separation's Low layer)
+        add(C.check('Pick colour each stroke', () => !!(App.doc && App.doc.active && App.doc.active.pickEachStroke), (v) => { const a = App.doc && App.doc.active; if (a) a.pickEachStroke = !!v; }, 'Each stroke on this layer starts with the colour under the brush (turned on for the Low layer of a frequency separation)'));
       }
       if (tool === 'clone' || s.brush.engine === 'clone') add(C.hint('Ctrl/Alt+click sets the source'));
       else if (tool === 'brush') add(C.hint('Shift+drag: size · Shift+click: straight line · Ctrl/Alt+click: pick colour'));
@@ -245,6 +252,11 @@
       T.textOptions(add);
     } else if (tool === 'stamp') {
       T.stampOptions(add);
+    } else if (tool === 'camove') {
+      add(C.segmented([['move', 'Move'], ['dup', 'Duplicate']], () => S().cmMode, (v) => App.set('cmMode', v)));
+      add(C.select('Model', [['migan', 'MI-GAN — fast (28 MB)'], ['lama', 'LaMa — best quality (208 MB)']], () => S().aiInpaint || 'migan', (v) => App.set('aiInpaint', v)));
+      add(stateCheck('Sample all layers', 'cmAll', 'Move what you see, not just the active layer'), stateCheck('On a new layer', 'cmNewLayer', 'Put the result on its own layer'));
+      add(C.hint('Select the object (lasso, quick select…), then drag it with this tool — AI fills the hole it leaves'));
     } else if (tool === 'airemove') {
       const R = ND.AIRemove;
       add(C.segmented([['paint', 'Paint over it'], ['select', 'Use selection']], () => S().airMode, (v) => { App.set('airMode', v); render(); }));

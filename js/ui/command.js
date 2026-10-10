@@ -1,4 +1,4 @@
-/* Neon Draw — command palette (Ctrl+K): type to find any menu command, tool, brush, filter,
+/* Neon Sparks Draw — command palette (Ctrl+K): type to find any menu command, tool, brush, filter,
  * adjustment, layer or recent file, then press Enter. */
 'use strict';
 (function () {
@@ -16,7 +16,8 @@
         if (it.head) { head = it.head; return; }
         if (it.sep || !it.run) return;
         const check = it.check ? (it.check() ? ' ✓' : '') : '';
-        out.push({ id: 'menu:' + name + ':' + it.label, label: it.label.replace(/…$/, '') + check, cat: name + (head ? ' ▸ ' + head : ''), key: it.key, run: it.run, needsDoc: name !== 'File' && name !== 'Help' });
+        const T = ND.Lang ? ND.Lang.t : (x) => x, tl = T(it.label);
+        out.push({ id: 'menu:' + name + ':' + it.label, label: tl.replace(/…$/, '') + check, en: tl !== it.label ? it.label : '', cat: T(name) + (head ? ' ▸ ' + T(head) : ''), key: it.key, run: it.run, needsDoc: name !== 'File' && name !== 'Help' });
       });
     });
     App.TOOLS.forEach((t) => out.push({ id: 'tool:' + t.id, label: t.label, cat: 'Tool', key: t.key, icon: t.icon, run: () => App.setTool(t.id), needsDoc: true }));
@@ -31,7 +32,7 @@
   // Fuzzy score: whole-word and prefix matches beat scattered letters; label beats category.
   function score(item, q) {
     if (!q) return 0;
-    const L = item.label.toLowerCase(), C = item.cat.toLowerCase();
+    const L = (item.label + (item.en ? ' ' + item.en : '')).toLowerCase(), C = item.cat.toLowerCase(); // translated and English words both match
     let s = 0;
     for (const w of q.split(/\s+/).filter(Boolean)) {
       let best = -1;

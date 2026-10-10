@@ -1,8 +1,8 @@
-/* Neon Draw — pigment (paint-like) colour mixing.
+/* Neon Sparks Draw — pigment (paint-like) colour mixing.
  * Screens mix light: blue + yellow averages to grey. Paint mixes pigment: blue + yellow makes green.
  * This uses the Kubelka–Munk model per channel in linear light: each colour is turned into an
  * absorption/scattering ratio K/S = (1 − R)² / 2R, ratios are mixed, then converted back to reflectance.
- * (Written for Neon Draw; no third-party code.) */
+ * (Written for Neon Sparks Draw; no third-party code.) */
 'use strict';
 (function () {
   const lin = new Float32Array(256), ks = new Float32Array(256);

@@ -1,4 +1,4 @@
-/* Neon Draw — Adjustments & Properties docker, curves / levels editors, layer style dialog, gradient editor. */
+/* Neon Sparks Draw — Adjustments & Properties docker, curves / levels editors, layer style dialog, gradient editor. */
 'use strict';
 (function () {
   const U = ND.U, h = U.h, C = ND.C, App = ND.App;
