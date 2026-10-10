@@ -71,6 +71,8 @@
     Image: [
       { label: 'Scale image…', run: () => D().scaleImage() },
       { label: 'Enlarge with AI (2× / 4×)…', run: () => App.aiUpscale() },
+      { label: 'Mode: 8 bits per channel', check: () => (doc().depth || 8) === 8, run: () => { const m = ND.Deep.convert(doc(), 8); App.toast(m || 'Converted to 8 bits per channel'); App.emit('tabs'); } },
+      { label: 'Mode: 16 bits per channel', check: () => doc().depth === 16, run: () => { const m = ND.Deep.convert(doc(), 16); App.toast(m || 'Converted to 16 bits per channel — smoother tones from now on (existing pixels keep their 8-bit values)', 5000); App.emit('tabs'); } },
       { label: 'Canvas size…', run: () => D().canvasSize() },
       { label: 'Crop to selection', run: () => App.cropToSelection() },
       { label: 'Trim transparent edges', run: () => App.trim() },
@@ -104,6 +106,7 @@
       { label: 'Convert to smart object', run: () => App.convertToSmart() },
       { label: 'Edit smart object contents', run: () => App.editSmart() },
       { label: 'Rasterize smart object', run: () => App.rasterizeSmart() },
+      { label: 'Remove selection with AI', run: () => App.aiRemoveSelection() },
       { label: 'Colourise line art (lazy brush)…', run: () => App.startColourise() },
       { label: 'Vector shape from path', run: () => App.pathToShape() },
       { sep: true },

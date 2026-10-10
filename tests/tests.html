@@ -33,6 +33,7 @@
   <script src="../js/smart.js"></script>
   <script src="../js/formats.js"></script>
   <script src="../js/colour.js"></script>
+  <script src="../js/deep.js"></script>
   <script src="../js/tips.js"></script>
   <script src="../js/patterns.js"></script>
   <script src="../js/patterns2.js"></script>
@@ -782,6 +783,32 @@
       window.__psdBytes = u;
       const back = await ND.PSD.importPSD(u.buffer, 't.psd');
       assert(back.allLayers().some((l) => l.name === 'Hello'), 'our own importer still reads it');
+    });
+    await test('16-bit documents: smooth tones survive painting, saving and TIFF / PNG', async () => {
+      if (!ND.Deep.supported()) { console.log('no 16-bit canvas here'); return; }
+      ND.Deep.use(16);
+      const d = new ND.Doc(256, 4, null); d.depth = 16;
+      const L = d.firstLayer(), x = U.ctx(L.canvas);
+      assert(ND.Deep.is16(L.canvas) && ND.Deep.is16(d.getProjection()), 'layers and the projection are 16-bit');
+      // a very dark, subtle gradient: 8 bits would give only a few steps
+      const g = x.createLinearGradient(0, 0, 256, 0); g.addColorStop(0, 'rgb(0,0,0)'); g.addColorStop(1, 'rgb(4,4,4)');
+      x.fillStyle = g; x.fillRect(0, 0, 256, 4); L.rev++; d.invalidateAll();
+      const steps = (c) => new Set(Array.from(ND.Deep.read16(c, 0, 0, 256, 1).data).filter((_, i) => i % 4 === 0).map((v) => v.toFixed(6))).size;
+      const s16 = steps(L.canvas);
+      assert(s16 > 20, 'many more than 5 tone steps in a 0–4 gradient (' + s16 + ')');
+      const d2 = await ND.Store.deserialize(ND.Store.serialize(d));
+      assert(d2.depth === 16 && steps(d2.firstLayer().canvas) === s16, 'saved and loaded losslessly');
+      const d3 = await ND.Store.restore(await ND.Store.autosaveRecord(d));
+      assert(steps(d3.firstLayer().canvas) === s16, 'autosave keeps 16 bits (compressed)');
+      const tif = await ND.Formats.readTIFF(await (await ND.Formats.writeTIFF(L.canvas, { bits16: true })).arrayBuffer());
+      assert(tif.bits === 16 && ND.Deep.is16(tif.canvas) && steps(tif.canvas) >= s16 - 2, '16-bit TIFF round trip');
+      const png = new Uint8Array(await (await ND.Deep.png16(L.canvas)).arrayBuffer());
+      assert(png[24] === 16 && png[25] === 6, '16-bit RGBA PNG');
+      const msg = ND.Deep.convert(d, 8);
+      assert(!msg && d.depth === 8 && !ND.Deep.is16(d.firstLayer().canvas), 'convert to 8-bit');
+      d.history.undo();
+      assert(d.depth === 16 && ND.Deep.is16(d.firstLayer().canvas), 'undo brings 16-bit back');
+      ND.Deep.use(8);
     });
     document.getElementById('sum').innerHTML = '<span class="' + (fail ? 'fail' : 'pass') + '">' + pass + ' passed, ' + fail + ' failed</span>';
   })();

@@ -32,6 +32,7 @@ js/anim.js            frame-by-frame animation: keyframes, motion tweening, onio
 js/smart.js           smart objects: original + placement (matrix or warp mesh), edit contents, rasterize
 js/formats.js         TIFF open/save, PDF save, Krita .kra open/save, editable text & adjustments in PSD export
 js/colour.js          colour management: ICC profiles, CMYK print preview, gamut warning, sRGB tagging
+js/deep.js            16-bit documents: float16 canvases, lossless 16-bit storage, 16-bit PNG
 js/textures.js        paper grain textures used by textured brushes
 js/paper.js           paper & canvas types: tints, rendering, and how each kind of brush responds to the tooth
 js/harmony.js         colour harmony schemes and the painter's (RYB) colour wheel
@@ -55,7 +56,7 @@ js/tools2.js          heal/patch/red-eye/liquify tools, assistants, rulers & gui
 js/ui/*.js            panels: toolbar, colour, brushes, layers, dialogs, menus, plus popup.js (pop-up palette),
                       command.js (Ctrl+K command palette), selectmask.js (Select and Mask workspace),
                       pen.js (Pen tool & Paths panel), colourise.js (Colourise bar), timeline.js (animation)
-                      and tabs.js (document tabs)
+                      tabs.js (document tabs) and airemove.js (AI remove tool)
 js/main.js            start-up, keyboard shortcuts, drag & drop, paste, autosave
 manifest.webmanifest  app name, icons and file types for the installed app
 sw.js                 offline cache (generated — edit tools/sw-template.js instead)
@@ -93,12 +94,14 @@ Help ▸ AI models lists three background-removal models and two upscalers (Imag
 | RMBG-1.4 (BRIA) | highest quality | 176 MB | non-commercial use only |
 | Swin2SR ×2 (lightweight) | enlarging 2×, fast | 8 MB | Apache 2.0, commercial use OK |
 | Swin2SR ×4 (real-world photos) | enlarging photos 4×, removes blur and JPEG blocks | 53 MB | Apache 2.0, commercial use OK |
+| MI-GAN | AI remove tool, fast | 28 MB | MIT, commercial use OK |
+| LaMa | AI remove tool, best quality | 208 MB | Apache 2.0, commercial use OK |
 
 AI needs the web or installed version; browsers block it for a file opened from disk and in the single-file build. With WebGPU (Chrome, Edge) a picture takes about a second, on the CPU 2–40 s depending on the model.
 
 ## Colour and bit depth
 
-Pictures are edited in sRGB at 8 bits per channel (the browser's drawing canvas works that way). Colour management covers what matters for most work: opening RGB files with their profiles, sRGB-tagged exports, a CMYK print preview / gamut warning with your printer's ICC profile, and CMYK TIFF export. True 16 / 32-bit editing would need a different, GPU-based drawing engine.
+Documents can be 8 or 16 bits per channel (File ▸ New, or Image ▸ Mode). 16-bit documents use the browser's 16-bit floating-point canvases (Chrome / Edge; other browsers fall back to 8-bit): painting, blending, opacity, masks, gradients, transforms and layer compositing keep smooth tones, projects and autosave store the pixels losslessly, and 16-bit TIFF / PNG can be opened and saved. Filters and adjustment layers still calculate at 8-bit precision. The working colour space is sRGB; colour management covers RGB profiles on open, sRGB-tagged exports, a CMYK print preview / gamut warning with your printer's ICC profile, and CMYK TIFF export.
 
 ## Releasing a new version
 

@@ -179,6 +179,7 @@
       add(brushSlider('Opacity', 'opacity', 0.01, 1, Object.assign({ step: 0.01 }, pct)));
       add(brushSlider('Flow', 'flow', 0.01, 1, Object.assign({ step: 0.01 }, pct)));
       add(brushSlider('Smoothing', 'stabilizer', 0, 1, Object.assign({ step: 0.01 }, pct)));
+      add(stateCheck('Pressure', 'pressureOn', 'Use pen pressure — turn off for an even line'), stateSlider('Sensitivity', 'pressureSens', 0, 100, { fmt: (v) => Math.round(v) + '%', title: 'How lightly you need to press: higher = a light touch gives a full stroke' }));
       if (!ND.Brush.DIRECT[s.brush.engine]) add(C.select('Blend', ND.Blend.MODES.map((m) => ({ value: m.id, label: m.label, group: m.cat })), () => s.brush.blend, (v) => App.setBrush({ blend: v })));
       add(...T.symmetryControls());
       if (tool === 'brush') {
@@ -244,6 +245,16 @@
       T.textOptions(add);
     } else if (tool === 'stamp') {
       T.stampOptions(add);
+    } else if (tool === 'airemove') {
+      const R = ND.AIRemove;
+      add(C.segmented([['paint', 'Paint over it'], ['select', 'Use selection']], () => S().airMode, (v) => { App.set('airMode', v); render(); }));
+      if (S().airMode !== 'select') add(stateSlider('Size', 'airSize', 4, 400, { log: true, unit: 'px', fmt: (v) => Math.round(v) }));
+      add(C.select('Model', [['migan', 'MI-GAN — fast (28 MB)'], ['lama', 'LaMa — best quality (208 MB)']], () => S().aiInpaint || 'migan', (v) => App.set('aiInpaint', v)));
+      add(stateCheck('Sample all layers', 'airAll', 'Use everything you see, not just the active layer'), stateCheck('On a new layer', 'airNewLayer', 'Put the result on its own layer (you can erase or hide it later)'));
+      if (S().airMode !== 'select') add(stateCheck('Remove when I lift the pen', 'airAuto'));
+      add(C.button(S().airMode === 'select' ? 'Remove selection' : 'Remove', () => R.run(S().airMode === 'select'), { cls: 'sm primary', icon: 'airemove' }));
+      if (S().airMode !== 'select') add(C.button('Clear', () => R.clear(), { cls: 'sm' }));
+      add(C.hint(S().airMode === 'select' ? 'Select the thing to remove with any selection tool, then click Remove selection' : 'Paint over what to remove (red) — it disappears when you lift the pen'));
     } else if (tool === 'pen') {
       const d = App.doc, L = d.active && d.active.shapeData ? d.active : null;
       if (L) {

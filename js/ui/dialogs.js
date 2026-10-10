@@ -105,18 +105,20 @@
       b.addEventListener('click', () => { w.value = pw; hh.value = ph; chips.querySelectorAll('.nd-chipbtn').forEach((q) => q.classList.toggle('active', q === b)); info(); });
       chips.appendChild(b);
     });
+    let depth = App.state.newDepth === 16 && ND.Deep.supported() ? 16 : 8;
+    const depthSeg = C.segmented([[8, '8-bit'], [16, '16-bit', 'Smoother gradients and edits, twice the memory']], () => depth, (v) => { if (+v === 16 && !ND.Deep.supported()) { App.toast('This browser can’t do 16-bit canvases yet — use Chrome or Edge'); return; } depth = +v; App.set('newDepth', depth); info(); });
     const swapB = C.button('⇄ Portrait / landscape', () => { const t = w.value; w.value = hh.value; hh.value = t; info(); }, { cls: 'sm' });
     const inf = h('div.nd-hint');
-    const info = () => { const mp = (w.value * hh.value) / 1e6; inf.textContent = (+w.value) + ' × ' + (+hh.value) + ' px · ' + mp.toFixed(1) + ' MP · about ' + U.fmtBytes(w.value * hh.value * 4) + ' per layer' + (mp > 20 ? ' — large canvases are slower' : ''); };
+    const info = () => { const mp = (w.value * hh.value) / 1e6; inf.textContent = (+w.value) + ' × ' + (+hh.value) + ' px · ' + mp.toFixed(1) + ' MP · about ' + U.fmtBytes(w.value * hh.value * (depth === 16 ? 8 : 4)) + ' per layer' + (mp > 20 ? ' — large canvases are slower' : ''); };
     w.addEventListener('input', info); hh.addEventListener('input', info);
     info();
-    D.modal('New document', h('div', chips, field('Name', name), h('div.nd-row', field('Width', w, 'px'), field('Height', hh, 'px'), swapB), inf, h('div.nd-row', h('span.nd-lbl', 'Background'), bgSeg, bgCol), h('div.nd-mini-title', 'Paper'), paperBox), [
+    D.modal('New document', h('div', chips, field('Name', name), h('div.nd-row', field('Width', w, 'px'), field('Height', hh, 'px'), swapB), inf, h('div.nd-row', h('span.nd-lbl', 'Background'), bgSeg, bgCol), h('div.nd-row', h('span.nd-lbl', 'Colour depth'), depthSeg), h('div.nd-mini-title', 'Paper'), paperBox), [
       { label: 'Cancel' },
       { label: 'Create', primary: true, action: () => {
         const W = U.clamp(Math.round(+w.value || 1920), 1, 16384), H = U.clamp(Math.round(+hh.value || 1080), 1, 16384);
         const bg = bgMode === 'paper' ? pp.tint : bgMode === 'white' ? '#ffffff' : bgMode === 'transparent' ? null : bgMode === 'bg' ? App.state.bg : bgCol.value;
         App.set('lastPaper', Object.assign({}, pp));
-        App.newDocument(W, H, bg, name.value || 'Untitled', pp.type === 'none' ? null : pp, bgMode === 'paper');
+        App.newDocument(W, H, bg, name.value || 'Untitled', pp.type === 'none' ? null : pp, bgMode === 'paper', depth);
       } },
     ], { wide: true });
   };

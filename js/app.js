@@ -21,6 +21,7 @@
     { id: 'heal', label: 'Spot healing brush', key: 'J', icon: 'heal', group: 'Retouch' },
     { id: 'patch', label: 'Patch (drag a selection onto good texture)', key: '', icon: 'patch', group: 'Retouch' },
     { id: 'redeye', label: 'Red-eye removal', key: '', icon: 'redeye', group: 'Retouch' },
+    { id: 'airemove', label: 'AI remove — paint over (or select) something and AI fills in what’s behind it', key: '', icon: 'airemove', group: 'Retouch' },
     { id: 'liquify', label: 'Liquify (push, bloat, pinch, twirl)', key: '', icon: 'liquify', group: 'Retouch' },
     { id: 'sel-rect', label: 'Rectangular select', key: 'R', icon: 'sel-rect', group: 'Select' },
     { id: 'sel-ellipse', label: 'Elliptical select', key: '', icon: 'sel-ellipse', group: 'Select' },
@@ -66,7 +67,7 @@
     grid: false, gridSize: 64, pixelGrid: true, wrap: false, showSymmetry: true, hideUI: false,
     dockWidth: 300, collapsed: {},
     touchMode: 'auto',
-    rightClick: 'palette', favBrushes: null, recentCommands: [], smartAI: false, aiModel: null, aiRemember: false, aiClean: true, toolboxMode: 'left', toolboxCols: 0, toolboxPos: null, dockCols: 1, dockLayout: null, smartFilter: false, strokePressure: true, showTimeline: false, aiUpscaler: 'sr2', predictPoints: false, prefsRev: 2, proofView: false, gamutWarn: false, pdfDpi: 300,
+    rightClick: 'palette', favBrushes: null, recentCommands: [], smartAI: false, aiModel: null, aiRemember: false, aiClean: true, toolboxMode: 'left', toolboxCols: 0, toolboxPos: null, dockCols: 1, dockLayout: null, smartFilter: false, strokePressure: true, showTimeline: false, aiUpscaler: 'sr2', predictPoints: false, prefsRev: 2, proofView: false, gamutWarn: false, pdfDpi: 300, newDepth: 8, pressureOn: true, pressureSens: 50, airMode: 'paint', airSize: 40, airAll: true, airNewLayer: true, airAuto: true, aiInpaint: 'migan',
   });
 
   const App = {
@@ -180,6 +181,7 @@
     }
     if (this.docUnsub) this.docUnsub();
     this.doc = doc;
+    if (ND.Deep) ND.Deep.use(doc.depth || 8); // new canvases match this document's colour depth
     this.docUnsub = doc.on((type) => this.emit('doc', type));
     doc.wrapAround = this.state.wrap;
     this.emit('docchange');
@@ -212,8 +214,11 @@
     return true;
   };
   App.cycleDoc = function (dir) { const n = this.docs.length; if (n > 1) this.showDoc(this.docs[(this.docs.indexOf(this.doc) + dir + n) % n]); };
-  App.newDocument = function (w, h, bg, name, paper, paperBackground) {
+  App.newDocument = function (w, h, bg, name, paper, paperBackground, depth) {
+    const deep = depth === 16 && ND.Deep && ND.Deep.supported();
+    if (ND.Deep) ND.Deep.use(deep ? 16 : 8);
     const d = new ND.Doc(w, h, bg);
+    d.depth = deep ? 16 : 8;
     d.name = name || 'Untitled';
     if (!bg) d.root.children[0].name = 'Layer 1';
     d.paper = paper ? ND.Paper.normalise(paper) : null;
@@ -282,14 +287,17 @@
         this.toast('Krita file opened · ' + doc.allLayers().length + ' layers' + (doc.importNote ? ' · ' + doc.importNote : ''), doc.importNote ? 6000 : 2000);
       } else if (n.endsWith('.tif') || n.endsWith('.tiff')) {
         const t = await ND.Formats.readTIFF(await file.arrayBuffer());
+        if (ND.Deep) ND.Deep.use(t.canvas._nd16 ? 16 : 8);
         // an embedded RGB colour profile (Adobe RGB, ProPhoto…) is converted to the sRGB working space
         let note = '';
         if (t.icc && !t.cmyk) { try { const P = ND.Colour.parseICC(t.icc); if (!/srgb/i.test(P.name || '') && ND.Colour.convertToSRGB(t.canvas, P)) note = ' · converted from ' + (P.name || 'its colour profile') + ' to sRGB'; } catch (e) { /* unreadable profile: use as is */ } }
         if (t.cmyk) note = ' · CMYK converted to RGB (' + ND.Colour.profileName + ')';
         if (t.bits === 16) note += ' · 16-bit read as 8-bit';
         const d = new ND.Doc(t.canvas.width, t.canvas.height, null);
+        d.depth = t.canvas._nd16 ? 16 : 8;
         d.root.children[0].name = 'Background';
         U.ctx(d.root.children[0].canvas).drawImage(t.canvas, 0, 0);
+        if (d.depth === 16) note = note.replace(' · 16-bit read as 8-bit', '') + ' · opened as a 16-bit document';
         d.name = file.name.replace(/\.[^.]+$/, '');
         d.invalidateAll();
         this.setDoc(d);
@@ -363,6 +371,7 @@
   App.exportImage = async function (fmt, quality) {
     const d = this.doc;
     let c = d.flatCopy();
+    if (fmt === 'png' && d.depth === 16 && ND.Deep) { U.download(U.safeName(d.name) + '.png', await ND.Deep.png16(c)); this.toast('Exported 16-bit PNG'); return; }
     if (fmt === 'jpeg') { const j = U.canvas(c.width, c.height), x = U.ctx(j); x.fillStyle = d.backgroundColor || '#ffffff'; x.fillRect(0, 0, j.width, j.height); x.drawImage(c, 0, 0); c = j; }
     let blob = await U.canvasToBlob(c, 'image/' + fmt, quality || 0.92);
     if (!blob) { this.toast('This browser cannot export ' + fmt.toUpperCase()); return; }
@@ -384,7 +393,7 @@
     this.toast('Saving TIFF…', 20000);
     try {
       let c = d.flatCopy();
-      const b = await ND.Formats.writeTIFF(c, { cmyk, icc: cmyk ? (ND.Colour.proof && ND.Colour.proofBytes) || null : ND.Colour.srgbICC(), dpi: this.state.pdfDpi || 300 });
+      const b = await ND.Formats.writeTIFF(c, { bits16: !cmyk && d.depth === 16, cmyk, icc: cmyk ? (ND.Colour.proof && ND.Colour.proofBytes) || null : ND.Colour.srgbICC(), dpi: this.state.pdfDpi || 300 });
       U.download(U.safeName(d.name) + (cmyk ? '-cmyk' : '') + '.tif', b);
       this.toast(cmyk ? 'Saved CMYK TIFF for print (' + ND.Colour.profileName + ')' : 'Saved TIFF');
     } catch (e) { this.toast('Could not save TIFF: ' + e.message, 5000); }
@@ -908,13 +917,13 @@
       fillPattern: s.fillPattern, gradType: s.gradType, gradTo: s.gradTo, dockWidth: s.dockWidth, collapsed: s.collapsed,
       gridSize: s.gridSize, palette: App.palette, palettes: App.userPalettes, shapeFill: s.shapeFill, shapeStroke: s.shapeStroke, shapeWidth: s.shapeWidth,
       lineUseBrush: s.lineUseBrush, touchMode: s.touchMode, healSize: s.healSize, liqSize: s.liqSize, liqStrength: s.liqStrength, liqMode: s.liqMode, fillGap: s.fillGap, rulers: s.rulers,
-      rightClick: s.rightClick, favBrushes: s.favBrushes, lastPaper: s.lastPaper, harmony: s.harmony, smartAI: s.smartAI, aiModel: s.aiModel, aiRemember: s.aiRemember, aiClean: s.aiClean, toolboxMode: s.toolboxMode, toolboxCols: s.toolboxCols, toolboxPos: s.toolboxPos, dockCols: s.dockCols, dockLayout: s.dockLayout, smartFilter: s.smartFilter, strokePressure: s.strokePressure, showTimeline: s.showTimeline, aiUpscaler: s.aiUpscaler, predictPoints: s.predictPoints, proofView: s.proofView, gamutWarn: s.gamutWarn, pdfDpi: s.pdfDpi, prefsRev: s.prefsRev, recentCommands: s.recentCommands, maskView: s.maskView, maskParams: s.maskParams,
+      rightClick: s.rightClick, favBrushes: s.favBrushes, lastPaper: s.lastPaper, harmony: s.harmony, smartAI: s.smartAI, aiModel: s.aiModel, aiRemember: s.aiRemember, aiClean: s.aiClean, toolboxMode: s.toolboxMode, toolboxCols: s.toolboxCols, toolboxPos: s.toolboxPos, dockCols: s.dockCols, dockLayout: s.dockLayout, smartFilter: s.smartFilter, strokePressure: s.strokePressure, showTimeline: s.showTimeline, aiUpscaler: s.aiUpscaler, predictPoints: s.predictPoints, proofView: s.proofView, gamutWarn: s.gamutWarn, pdfDpi: s.pdfDpi, newDepth: s.newDepth, pressureOn: s.pressureOn, pressureSens: s.pressureSens, airMode: s.airMode, airSize: s.airSize, airAll: s.airAll, airNewLayer: s.airNewLayer, airAuto: s.airAuto, aiInpaint: s.aiInpaint, prefsRev: s.prefsRev, recentCommands: s.recentCommands, maskView: s.maskView, maskParams: s.maskParams,
     });
   }, 600);
   App.loadPrefs = function () {
     const p = ND.Store.prefs(), s = this.state;
     if (p.brush) s.brush = ND.Brush.normalise(p.brush);
-    ['brushName', 'fg', 'bg', 'recent', 'eraserSize', 'toolSettings', 'stamp', 'stampSize', 'stampMode', 'stampRandom', 'fillPattern', 'gradType', 'gradTo', 'dockWidth', 'collapsed', 'gridSize', 'shapeFill', 'shapeStroke', 'shapeWidth', 'lineUseBrush', 'touchMode', 'healSize', 'liqSize', 'liqStrength', 'liqMode', 'fillGap', 'rulers', 'rightClick', 'favBrushes', 'lastPaper', 'harmony', 'smartAI', 'aiModel', 'aiRemember', 'aiClean', 'toolboxMode', 'toolboxCols', 'toolboxPos', 'dockCols', 'dockLayout', 'smartFilter', 'strokePressure', 'showTimeline', 'aiUpscaler', 'predictPoints', 'proofView', 'gamutWarn', 'pdfDpi', 'recentCommands', 'maskView', 'maskParams'].forEach((k) => { if (p[k] != null) s[k] = p[k]; });
+    ['brushName', 'fg', 'bg', 'recent', 'eraserSize', 'toolSettings', 'stamp', 'stampSize', 'stampMode', 'stampRandom', 'fillPattern', 'gradType', 'gradTo', 'dockWidth', 'collapsed', 'gridSize', 'shapeFill', 'shapeStroke', 'shapeWidth', 'lineUseBrush', 'touchMode', 'healSize', 'liqSize', 'liqStrength', 'liqMode', 'fillGap', 'rulers', 'rightClick', 'favBrushes', 'lastPaper', 'harmony', 'smartAI', 'aiModel', 'aiRemember', 'aiClean', 'toolboxMode', 'toolboxCols', 'toolboxPos', 'dockCols', 'dockLayout', 'smartFilter', 'strokePressure', 'showTimeline', 'aiUpscaler', 'predictPoints', 'proofView', 'gamutWarn', 'pdfDpi', 'newDepth', 'pressureOn', 'pressureSens', 'airMode', 'airSize', 'airAll', 'airNewLayer', 'airAuto', 'aiInpaint', 'recentCommands', 'maskView', 'maskParams'].forEach((k) => { if (p[k] != null) s[k] = p[k]; });
     if (p.text) Object.assign(s.text, p.text);
     // 2.6.1 changed two defaults: rulers on, pen prediction off — apply them once to older settings
     if (!(p.prefsRev >= 2)) { s.rulers = true; s.predictPoints = false; }

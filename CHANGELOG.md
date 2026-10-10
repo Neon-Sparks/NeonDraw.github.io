@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.8.0 — 16-bit editing, AI remove, pressure controls
+
+- **16-bit documents.** File ▸ New has a Colour depth choice (8-bit / 16-bit), and Image ▸ Mode converts an open document (undoable). In 16-bit documents every layer, mask and work buffer keeps 16-bit precision, so dark gradients, soft brushes, glazes and heavy opacity work stay smooth instead of banding. Projects and autosave store the 16 bits losslessly (compressed). 16-bit TIFFs open as 16-bit documents; Export PNG and Export TIFF save 16 bits per channel. The tab shows “16-bit”. Needs Chrome or Edge (other browsers keep 8-bit). Filters and adjustment layers still calculate at 8-bit precision.
+- **AI remove tool** (left toolbox, Retouch group, sparkle icon).
+  - **Paint over it:** brush over what you want gone (shown in red) — it disappears when you lift the pen (or turn that off and click Remove). Size slider in the top bar.
+  - **Use selection:** select it with any selection tool, then Remove selection (also Layer ▸ Remove selection with AI).
+  - Models: **MI-GAN** (fast, 28 MB, MIT) or **LaMa** (best quality, 208 MB, Apache 2.0), downloaded once and then offline; nothing is uploaded. Help ▸ AI models lists them.
+  - The result goes on its own “AI remove” layer by default (erase or hide parts of it), or straight onto the layer. “Sample all layers” uses everything you see.
+  - It works on the area around what you marked, so big photos are fine.
+- **Pen pressure controls** in the top bar for brushes: a **Pressure** tick box (on by default — untick for an even line) and a **Sensitivity** slider (50% = as the pen reports it; higher = a lighter touch gives a full stroke; lower = press harder).
+
 ## 2.7.0 — tabs, smart objects, print colours, animation extras, more file types
 
 - **Several documents at once.** Every new or opened file gets a tab at the top. Click to switch (each keeps its own zoom and position), double-click to rename, × or middle-click to close, drag to reorder, + for a new one. File ▸ Close document (Ctrl+Alt+W), Next / Previous document (Alt+PgDn / Alt+PgUp). Autosave keeps all open tabs.

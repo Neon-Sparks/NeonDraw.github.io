@@ -34,9 +34,12 @@ self.onmessage = async (e) => {
       reply(m.id, { provider, inputs: session.inputNames, outputs: session.outputNames });
     } else if (m.type === 'run') {
       const t0 = performance.now();
-      const out = await session.run({ [session.inputNames[0]]: new RT.Tensor('float32', m.data, m.dims) });
+      let feeds;
+      if (m.feeds) { feeds = {}; m.feeds.forEach((f, i) => { feeds[session.inputNames[i]] = new RT.Tensor(f.type || 'float32', f.data, f.dims); }); } // several inputs (e.g. picture + mask)
+      else feeds = { [session.inputNames[0]]: new RT.Tensor('float32', m.data, m.dims) };
+      const out = await session.run(feeds);
       const o = out[session.outputNames[0]];
-      const data = o.data instanceof Float32Array ? o.data : Float32Array.from(o.data);
+      const data = m.feeds ? o.data : o.data instanceof Float32Array ? o.data : Float32Array.from(o.data);
       reply(m.id, { data, dims: o.dims, ms: performance.now() - t0, provider }, [data.buffer]);
     } else if (m.type === 'release') {
       if (session) { try { await session.release(); } catch (err) { /* ignore */ } }

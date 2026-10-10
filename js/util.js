@@ -12,8 +12,10 @@ window.ND = window.ND || {};
   U.TAU = Math.PI * 2;
 
   /* ---------- canvas helpers ---------- */
+  U.colorType = 'unorm8'; // 'float16' while a 16-bit document is being edited
   U.canvas = function (w, h) {
     const c = document.createElement('canvas');
+    if (U.colorType === 'float16') c._nd16 = true;
     c.width = Math.max(1, Math.round(w));
     c.height = Math.max(1, Math.round(h));
     return c;
@@ -21,7 +23,7 @@ window.ND = window.ND || {};
   // Canvases we read back from often get the willReadFrequently hint.
   U.ctx = function (c) {
     if (c._nd2d) return c._nd2d;
-    const x = c.getContext('2d', { willReadFrequently: true });
+    const x = c.getContext('2d', c._nd16 ? { willReadFrequently: true, colorType: 'float16' } : { willReadFrequently: true });
     if (!x) throw new Error('2d context unavailable');
     c._nd2d = x;
     return x;

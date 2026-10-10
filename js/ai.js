@@ -47,10 +47,24 @@
       licence: 'Apache 2.0', commercial: true, licenceNote: 'Free to use on any image, including commercial work.',
     },
   };
+  // object removal (inpainting)
+  MODELS.migan = {
+    id: 'migan', kind: 'inpaint', name: 'MI-GAN', title: 'Fast object removal',
+    best: 'Removes people, wires, spots and clutter in a second or two — great for everyday clean-ups',
+    url: HF + 'andraniksargsyan/migan/resolve/main/migan_pipeline_v2.onnx', size: 28079181,
+    licence: 'MIT', commercial: true, licenceNote: 'Free to use on any image, including commercial work.',
+  };
+  MODELS.lama = {
+    id: 'lama', kind: 'inpaint', name: 'LaMa', title: 'Best-quality object removal',
+    best: 'Best on big objects and repeating textures (brick, grass, fabric, sky); slower',
+    url: HF + 'Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx', size: 208044816,
+    licence: 'Apache 2.0', commercial: true, licenceNote: 'Free to use on any image, including commercial work.',
+  };
   const ORDER = ['isnet', 'modnet', 'rmbg'];
   const UPSCALERS = ['sr2', 'sr4'];
+  const INPAINT = ['migan', 'lama'];
 
-  const AI = { MODELS, ORDER, UPSCALERS, downloads: {} };
+  const AI = { MODELS, ORDER, UPSCALERS, INPAINT, downloads: {} };
 
   // Models that must run on the CPU: known ones, plus any that failed on the graphics card here before.
   const CPU_KEY = 'nd-ai-cpu-models';
@@ -74,7 +88,7 @@
   };
   AI.status = async function () {
     const out = {};
-    for (const id of ORDER.concat(UPSCALERS)) out[id] = { downloaded: await AI.isDownloaded(id), downloading: !!AI.downloads[id] };
+    for (const id of ORDER.concat(UPSCALERS, INPAINT)) out[id] = { downloaded: await AI.isDownloaded(id), downloading: !!AI.downloads[id] };
     return out;
   };
   AI.storage = async function () {
@@ -373,6 +387,67 @@
       ox.globalCompositeOperation = 'destination-in'; ox.drawImage(a, 0, 0); ox.globalCompositeOperation = 'source-over';
     }
     return out;
+  };
+
+  /* ---------- AI remove (inpainting) ----------
+   * src: the picture; hole: a canvas whose alpha marks what to remove. The model works on a square around
+   * the marked area (enough surroundings to fill from) at 512 × 512; the result is scaled back and blended
+   * in with a soft edge. Returns { patch: full-size canvas with only the filled area, seconds }. */
+  AI.inpaint = async function (id, src, hole, status) {
+    status = status || (() => {});
+    const t0 = performance.now(), W = src.width, H = src.height, S = 512;
+    const bb = ND.Sel.contentBBox(hole);
+    if (!bb) throw new Error('nothing is marked to remove');
+    await load(id, status);
+    const prevType = U.colorType; U.colorType = 'unorm8'; // the model sees 8-bit pixels
+    try {
+      let side = Math.max(256, Math.round(Math.max(bb.w, bb.h) * 2.2));
+      const cw = Math.min(side, W), ch = Math.min(side, H);
+      const x0 = U.clamp(Math.round(bb.x + bb.w / 2 - cw / 2), 0, W - cw), y0 = U.clamp(Math.round(bb.y + bb.h / 2 - ch / 2), 0, H - ch);
+      const k = S / Math.max(cw, ch), sw = Math.max(8, Math.round(cw * k)), sh = Math.max(8, Math.round(ch * k));
+      // picture: the crop scaled to fit, edges stretched to fill the square
+      const im = U.canvas(S, S), ix = U.ctx(im);
+      ix.fillStyle = '#ffffff'; ix.fillRect(0, 0, S, S);
+      ix.imageSmoothingQuality = 'high';
+      ix.drawImage(src, x0, y0, cw, ch, 0, 0, sw, sh);
+      if (sw < S) ix.drawImage(im, sw - 1, 0, 1, sh, sw, 0, S - sw, sh);
+      if (sh < S) ix.drawImage(im, 0, sh - 1, S, 1, 0, sh, S, S - sh);
+      // mask: grown a few pixels so the edge of the object goes too
+      const mk = U.canvas(S, S), mx = U.ctx(mk), grow = Math.max(2, Math.round(3 * Math.max(1, k)));
+      for (let a = 0; a < 8; a++) mx.drawImage(hole, x0, y0, cw, ch, Math.cos(a * Math.PI / 4) * grow, Math.sin(a * Math.PI / 4) * grow, sw, sh);
+      mx.drawImage(hole, x0, y0, cw, ch, 0, 0, sw, sh);
+      const pd = ix.getImageData(0, 0, S, S).data, md = mx.getImageData(0, 0, S, S).data, n = S * S;
+      const lama = id === 'lama', img = lama ? new Float32Array(3 * n) : new Uint8Array(3 * n), msk = lama ? new Float32Array(n) : new Uint8Array(n);
+      for (let i = 0; i < n; i++) {
+        const isHole = md[i * 4 + 3] > 24;
+        for (let c = 0; c < 3; c++) img[c * n + i] = lama ? pd[i * 4 + c] / 255 : pd[i * 4 + c];
+        msk[i] = lama ? (isHole ? 1 : 0) : isHole ? 0 : 255; // MI-GAN: 255 = keep · LaMa: 1 = remove
+      }
+      const type = lama ? 'float32' : 'uint8';
+      status(AI.provider === 'webgpu' ? 'Removing (graphics card)…' : 'Removing… (CPU' + (lama ? ', about 5–20 s' : ', a few seconds') + ')');
+      const feeds = () => [{ data: img.slice(), dims: [1, 3, S, S], type }, { data: msk.slice(), dims: [1, 1, S, S], type }];
+      let res;
+      try { res = await AI.call({ type: 'run', feeds: feeds() }); } catch (e) {
+        if (AI.provider !== 'webgpu') throw e;
+        console.warn('AI remove failed on WebGPU, using the CPU —', e.message);
+        AI.markCpuOnly(id); resetWorker(); await load(id, status);
+        res = await AI.call({ type: 'run', feeds: feeds() });
+      }
+      const o = res.data, out = U.canvas(S, S), ox = U.ctx(out), oi = ox.createImageData(S, S);
+      for (let i = 0; i < n; i++) { for (let c = 0; c < 3; c++) oi.data[i * 4 + c] = o[c * n + i]; oi.data[i * 4 + 3] = 255; }
+      ox.putImageData(oi, 0, 0);
+      U.colorType = prevType;
+      // back to full size, kept only where something was removed (soft edge)
+      const patch = U.canvas(W, H), px = U.ctx(patch);
+      px.imageSmoothingQuality = 'high';
+      px.drawImage(out, 0, 0, sw, sh, x0, y0, cw, ch);
+      const soft = U.canvas(W, H), sx = U.ctx(soft), g = Math.max(2, Math.round(grow / k));
+      sx.filter = 'blur(' + Math.max(1, g / 2) + 'px)';
+      for (let a = 0; a < 8; a++) sx.drawImage(hole, Math.cos(a * Math.PI / 4) * g * 0.7, Math.sin(a * Math.PI / 4) * g * 0.7);
+      sx.drawImage(hole, 0, 0);
+      px.globalCompositeOperation = 'destination-in'; px.drawImage(soft, 0, 0);
+      return { patch, rect: { x: x0, y: y0, w: cw, h: ch }, seconds: (performance.now() - t0) / 1000, provider: res.provider };
+    } finally { U.colorType = prevType; }
   };
 
   /* AI quick select: paint over things and get the AI-detected objects under the strokes.

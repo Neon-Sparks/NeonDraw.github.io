@@ -19,7 +19,7 @@
       const active = d === App.doc, mark = d._fileDirty && d.fileHandle ? '● ' : '';
       const close = h('span.nd-tab-x', { title: 'Close (Ctrl+Alt+W)' }, '×');
       const tab = h('div.nd-tab' + (active ? '.active' : '') + (d.smartParent ? '.smart' : ''), { role: 'tab', draggable: 'true', title: d.name + ' — ' + d.width + ' × ' + d.height + (d.fileHandle ? '\nSaved as ' + d.fileHandle.name : '') + (d.smartParent ? '\nSmart object contents — save (Ctrl+S) or close this tab to update the layer' : '') + (active ? '\nDouble-click to rename' : '') },
-        h('span.nd-tab-name', mark + d.name), h('span.nd-tab-size', d.width + '×' + d.height), close);
+        h('span.nd-tab-name', mark + d.name), h('span.nd-tab-size', d.width + '×' + d.height + (d.depth === 16 ? ' · 16-bit' : '')), close);
       tab.addEventListener('click', (e) => { if (e.target === close) { App.closeDoc(d); return; } App.showDoc(d); });
       tab.addEventListener('auxclick', (e) => { if (e.button === 1) { e.preventDefault(); App.closeDoc(d); } });
       tab.addEventListener('dblclick', (e) => { if (e.target === close || !active) return; const n = window.prompt('Document name', d.name); if (n) { d.name = n; render(); App.emit('saved'); } });

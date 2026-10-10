@@ -621,8 +621,10 @@ window.ND = window.ND || {};
   U.TAU = Math.PI * 2;
 
   /* ---------- canvas helpers ---------- */
+  U.colorType = 'unorm8'; // 'float16' while a 16-bit document is being edited
   U.canvas = function (w, h) {
     const c = document.createElement('canvas');
+    if (U.colorType === 'float16') c._nd16 = true;
     c.width = Math.max(1, Math.round(w));
     c.height = Math.max(1, Math.round(h));
     return c;
@@ -630,7 +632,7 @@ window.ND = window.ND || {};
   // Canvases we read back from often get the willReadFrequently hint.
   U.ctx = function (c) {
     if (c._nd2d) return c._nd2d;
-    const x = c.getContext('2d', { willReadFrequently: true });
+    const x = c.getContext('2d', c._nd16 ? { willReadFrequently: true, colorType: 'float16' } : { willReadFrequently: true });
     if (!x) throw new Error('2d context unavailable');
     c._nd2d = x;
     return x;
@@ -936,6 +938,7 @@ window.ND = window.ND || {};
     removebg: '<rect x="3.5" y="3.5" width="17" height="17" rx="2" stroke-dasharray="3 2"/><path d="M8 18c0-3 2-5 4-5s4 2 4 5"/><circle cx="12" cy="9" r="2.6"/>',
     download: '<path d="M12 4v11"/><path d="M7 10.5l5 5 5-5"/><path d="M5 19.5h14"/>',
     refresh: '<path d="M19.5 8A8 8 0 0 0 5 7.5"/><path d="M4.5 3.5v4h4"/><path d="M4.5 16a8 8 0 0 0 14.5.5"/><path d="M19.5 20.5v-4h-4"/>',
+    airemove: '<path d="M4 20l7-7"/><path d="M9.5 11.5l3 3"/><path d="M13 4l1.2 2.8L17 8l-2.8 1.2L13 12l-1.2-2.8L9 8l2.8-1.2z" fill="currentColor" stroke="none"/><path d="M19 13l.7 1.6 1.6.7-1.6.7L19 17.6l-.7-1.6-1.6-.7 1.6-.7z" fill="currentColor" stroke="none"/>',
     play: '<path d="M7 4.5v15l12-7.5z" fill="currentColor"/>',
     first: '<path d="M6 5v14"/><path d="M18 5l-9 7 9 7z" fill="currentColor"/>',
     prev: '<path d="M15 5l-7 7 7 7"/>',
@@ -4381,6 +4384,7 @@ void main() {
   <script>/* js/formats.js */
 /* Neon Draw — more file formats: TIFF (open / save), PDF (save), Krita .kra (open / save), and the parts of
  * Photoshop files that keep text and adjustment layers editable. All written from the published layouts. */
+/* global Float16Array */
 'use strict';
 (function () {
   const U = ND.U, enc = new TextEncoder();
@@ -4464,7 +4468,7 @@ void main() {
     const tw = tiled ? T[322][0] : W, th = tiled ? T[323][0] : (T[278] || [H])[0];
     const offs = tiled ? T[324] : T[273], cnts = tiled ? T[325] : T[279];
     const across = tiled ? Math.ceil(W / tw) : 1, planes = planar === 2 ? spp : 1;
-    const full = new Uint8Array(W * H * spp * (bps / 8 >= 1 ? bps / 8 : 1));
+    const full = new Uint8Array(W * H * spp), full16 = bps === 16 ? new Uint16Array(W * H * spp) : null;
     const chunkSpp = planar === 2 ? 1 : spp, rowBytes = Math.ceil((tw * chunkSpp * bps) / 8);
     const per = offs.length / planes;
     for (let ci = 0; ci < offs.length; ci++) {
@@ -4488,7 +4492,7 @@ void main() {
           for (let c = 0; c < chunkSpp; c++) {
             const ch = planar === 2 ? plane : c, dst = ((y0 + r) * W + x0 + x) * spp + ch;
             if (bps === 8) full[dst] = data[r * rowBytes + x * chunkSpp + c];
-            else if (bps === 16) { const a = r * rowBytes + (x * chunkSpp + c) * 2; full[dst] = le ? data[a + 1] : data[a]; } // keep the high byte
+            else if (bps === 16) { const a = r * rowBytes + (x * chunkSpp + c) * 2, v16 = le ? data[a] | (data[a + 1] << 8) : (data[a] << 8) | data[a + 1]; full[dst] = v16 >> 8; full16[dst] = v16; }
             else full[dst] = (data[r * rowBytes + ((x * chunkSpp + c) >> 3)] >> (7 - ((x * chunkSpp + c) & 7))) & 1 ? 255 : 0;
           }
         }
@@ -4507,6 +4511,16 @@ void main() {
       o[d] = r; o[d + 1] = g; o[d + 2] = b; o[d + 3] = a;
     }
     x.putImageData(img, 0, 0);
+    // 16-bit RGB / grey: keep every bit in a 16-bit canvas
+    if (full16 && (photo === 2 || photo <= 1) && ND.Deep && ND.Deep.supported()) {
+      const half = new Float16Array(W * H * 4);
+      for (let i = 0; i < W * H; i++) {
+        const s0 = i * spp;
+        if (photo === 2) { half[i * 4] = full16[s0] / 65535; half[i * 4 + 1] = full16[s0 + 1] / 65535; half[i * 4 + 2] = full16[s0 + 2] / 65535; half[i * 4 + 3] = spp > 3 ? full16[s0 + 3] / 65535 : 1; }
+        else { const v = (photo === 0 ? 65535 - full16[s0] : full16[s0]) / 65535; half[i * 4] = half[i * 4 + 1] = half[i * 4 + 2] = v; half[i * 4 + 3] = spp > 1 ? full16[s0 + 1] / 65535 : 1; }
+      }
+      return { canvas: ND.Deep.canvasFromHalf(half, W, H), icc: T.icc || null, cmyk: false, bits: 16 };
+    }
     return { canvas: c, icc: T.icc || null, cmyk: photo === 5, bits: bps };
   };
   /* Save a TIFF. opts: { cmyk: false, icc: Uint8Array|null, dpi: 72, alpha: true }.
@@ -4514,22 +4528,29 @@ void main() {
   F.writeTIFF = async function (canvas, opts) {
     opts = opts || {};
     const W = canvas.width, H = canvas.height, d = rgbaOf(canvas), cmyk = !!opts.cmyk, spp = cmyk ? 4 : opts.alpha === false ? 3 : 4;
-    const raw = new Uint8Array(W * H * spp);
-    for (let i = 0, j = 0; i < W * H; i++, j += 4) {
+    const b16 = !!opts.bits16 && !cmyk && ND.Deep && ND.Deep.is16(canvas), bytesPer = b16 ? 2 : 1;
+    let raw = new Uint8Array(W * H * spp);
+    if (b16) {
+      // 16 bits per channel, big-endian samples are fine as long as the byte order mark says so: we write little-endian
+      const f16 = ND.Deep.read16(canvas).data, r16 = new Uint8Array(W * H * 4 * 2);
+      for (let i = 0; i < W * H * 4; i++) { const v = Math.round(Math.max(0, Math.min(1, f16[i])) * 65535); r16[i * 2] = v & 255; r16[i * 2 + 1] = v >> 8; }
+      raw = r16;
+    }
+    for (let i = 0, j = 0; i < W * H && !b16; i++, j += 4) {
       if (cmyk) { const k = ND.Colour.rgbToCmyk(d[j], d[j + 1], d[j + 2], d[j + 3]); raw.set(k, i * 4); }
       else { raw[i * spp] = d[j]; raw[i * spp + 1] = d[j + 1]; raw[i * spp + 2] = d[j + 2]; if (spp === 4) raw[i * spp + 3] = d[j + 3]; }
     }
     // horizontal prediction makes Deflate much smaller for photos
-    const row = W * spp;
-    for (let y = 0; y < H; y++) for (let x = row - 1; x >= spp; x--) raw[y * row + x] = (raw[y * row + x] - raw[y * row + x - spp]) & 255;
+    const row = W * spp * bytesPer;
+    if (!b16) for (let y = 0; y < H; y++) for (let x = row - 1; x >= spp; x--) raw[y * row + x] = (raw[y * row + x] - raw[y * row + x - spp]) & 255;
     const rps = Math.max(1, Math.floor(262144 / row)), strips = [];
     for (let y = 0; y < H; y += rps) strips.push(await F.deflate(raw.subarray(y * row, Math.min(H, y + rps) * row)));
     const tags = [];
     const add = (tag, type, vals) => tags.push({ tag, type, vals: Array.isArray(vals) || vals instanceof Uint8Array ? vals : [vals] });
     const dpi = opts.dpi || 72;
-    add(256, 4, W); add(257, 4, H); add(258, 3, new Array(spp).fill(8)); add(259, 3, 8); add(262, 3, cmyk ? 5 : 2);
+    add(256, 4, W); add(257, 4, H); add(258, 3, new Array(spp).fill(b16 ? 16 : 8)); add(259, 3, 8); add(262, 3, cmyk ? 5 : 2);
     add(273, 4, strips.map(() => 0)); add(277, 3, spp); add(278, 4, rps); add(279, 4, strips.map((s) => s.length));
-    add(282, 5, [dpi]); add(283, 5, [dpi]); add(284, 3, 1); add(296, 3, 2); add(305, 2, enc.encode('Neon Draw\0')); add(317, 3, 2);
+    add(282, 5, [dpi]); add(283, 5, [dpi]); add(284, 3, 1); add(296, 3, 2); add(305, 2, enc.encode('Neon Draw\0')); add(317, 3, b16 ? 1 : 2);
     if (spp === 4 && !cmyk) add(338, 3, 2);
     if (opts.icc) add(34675, 7, opts.icc);
     tags.sort((a, b) => a.tag - b.tag);
@@ -5169,6 +5190,101 @@ void main() {
   };
 
   ND.Colour = C;
+})();
+
+</script>
+  <script>/* js/deep.js */
+/* Neon Draw — 16-bit documents. A 16-bit document keeps every layer, mask and work buffer in 16-bit floating
+ * point canvases (where the browser supports them), so painting, blending, opacity, masks, gradients,
+ * transforms and layer compositing keep smooth tones without banding. Projects store the 16-bit pixels
+ * losslessly; 16-bit TIFF and PNG can be opened / saved. */
+/* global Float16Array */
+'use strict';
+(function () {
+  const U = ND.U;
+  const D = {};
+  let ok = null;
+  D.supported = function () {
+    if (ok !== null) return ok;
+    try {
+      const c = document.createElement('canvas'); c.width = c.height = 1;
+      const x = c.getContext('2d', { colorType: 'float16' });
+      ok = !!(x && x.getContextAttributes && x.getContextAttributes().colorType === 'float16' && typeof Float16Array !== 'undefined');
+      if (ok) { x.fillStyle = '#ffffff'; x.fillRect(0, 0, 1, 1); ok = x.getImageData(0, 0, 1, 1, { pixelFormat: 'rgba-float16' }).data instanceof Float16Array; }
+    } catch (e) { ok = false; }
+    return ok;
+  };
+  D.is16 = (c) => !!(c && c._nd16);
+  // new canvases follow the document that is being edited
+  D.use = function (depth) { U.colorType = depth === 16 && D.supported() ? 'float16' : 'unorm8'; };
+  D.read16 = (c, x, y, w, h) => U.ctx(c).getImageData(x || 0, y || 0, w || c.width, h || c.height, { pixelFormat: 'rgba-float16' });
+  D.canvasFromHalf = function (half, w, h) {
+    const prev = U.colorType; U.colorType = 'float16';
+    const c = U.canvas(w, h); U.colorType = prev;
+    U.ctx(c).putImageData(new ImageData(half, w, h, { pixelFormat: 'rgba-float16' }), 0, 0);
+    return c;
+  };
+  /* ---------- lossless 16-bit storage: "ND16" + w + h + deflated half floats ---------- */
+  const header = (w, h) => { const b = new Uint8Array(12), v = new DataView(b.buffer); b.set([78, 68, 49, 54]); v.setUint32(4, w, true); v.setUint32(8, h, true); return b; };
+  D.encode = async function (c) {
+    const d = D.read16(c).data, bytes = new Uint8Array(d.buffer, d.byteOffset, d.byteLength);
+    return new Blob([header(c.width, c.height), await ND.Formats.deflate(bytes)], { type: 'application/x-nd16' });
+  };
+  D.encodeSync = function (c) { // uncompressed (only used by the synchronous project writer)
+    const d = D.read16(c).data, bytes = new Uint8Array(d.buffer, d.byteOffset, d.byteLength), all = new Uint8Array(12 + bytes.length);
+    all.set(header(c.width, c.height)); all.set(bytes, 12);
+    let s = ''; for (let i = 0; i < all.length; i += 32768) s += String.fromCharCode.apply(null, all.subarray(i, i + 32768));
+    return 'data:application/x-nd16-raw;base64,' + btoa(s);
+  };
+  D.decode = async function (u8, compressed) {
+    const v = new DataView(u8.buffer, u8.byteOffset), w = v.getUint32(4, true), h = v.getUint32(8, true);
+    let body = u8.subarray(12);
+    if (compressed) body = await ND.Formats.inflate(body);
+    const half = new Float16Array(body.buffer.slice(body.byteOffset, body.byteOffset + w * h * 8));
+    return D.canvasFromHalf(half, w, h);
+  };
+  D.isRef = (ref) => typeof ref === 'string' && ref.startsWith('data:application/x-nd16');
+  D.loadRef = async function (ref) {
+    if (ref instanceof Blob) return D.decode(new Uint8Array(await ref.arrayBuffer()), true);
+    const raw = ref.startsWith('data:application/x-nd16-raw');
+    const bin = atob(ref.slice(ref.indexOf(',') + 1)), u = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+    return D.decode(u, !raw);
+  };
+  // the right encoder for any canvas (16-bit ones losslessly, others as PNG)
+  D.blobFor = (c) => (D.is16(c) ? D.encode(c) : U.canvasToBlob(c, 'image/png'));
+
+  /* ---------- converting a document ---------- */
+  D.convert = function (doc, depth) {
+    if (depth === 16 && !D.supported()) return 'This browser can’t do 16-bit canvases yet (Chrome / Edge can)';
+    if ((doc.depth || 8) === depth) return '';
+    const before = doc.depth || 8;
+    D.use(depth);
+    doc.resizeAll(doc.width, doc.height, (x, src) => x.drawImage(src, 0, 0), depth === 16 ? 'Convert to 16-bit' : 'Convert to 8-bit');
+    const top = doc.history.stack[doc.history.pos - 1], u = top.undo, r = top.redo;
+    top.undo = () => { D.use(before); u(); doc.depth = before; };
+    top.redo = () => { D.use(depth); r(); doc.depth = depth; };
+    doc.depth = depth;
+    doc.pool = [];
+    doc.invalidateAll();
+    return '';
+  };
+
+  /* ---------- 16-bit PNG ---------- */
+  D.png16 = async function (c) {
+    const W = c.width, H = c.height, d = D.read16(c).data, raw = new Uint8Array(H * (1 + W * 8));
+    for (let y = 0; y < H; y++) {
+      const o = y * (1 + W * 8);
+      for (let x = 0; x < W * 4; x++) { const v = Math.round(Math.max(0, Math.min(1, d[y * W * 4 + x])) * 65535); raw[o + 1 + x * 2] = v >> 8; raw[o + 2 + x * 2] = v & 255; }
+    }
+    const crcT = new Uint32Array(256).map((_, n) => { let c2 = n; for (let k = 0; k < 8; k++) c2 = c2 & 1 ? 0xedb88320 ^ (c2 >>> 1) : c2 >>> 1; return c2 >>> 0; });
+    const crc = (b) => { let c2 = 0xffffffff; for (let i = 0; i < b.length; i++) c2 = crcT[(c2 ^ b[i]) & 255] ^ (c2 >>> 8); return (c2 ^ 0xffffffff) >>> 0; };
+    const chunk = (type, data) => { const b = new Uint8Array(12 + data.length), v = new DataView(b.buffer); v.setUint32(0, data.length); b.set(new TextEncoder().encode(type), 4); b.set(data, 8); v.setUint32(8 + data.length, crc(b.subarray(4, 8 + data.length))); return b; };
+    const ihdr = new Uint8Array(13), iv = new DataView(ihdr.buffer);
+    iv.setUint32(0, W); iv.setUint32(4, H); ihdr[8] = 16; ihdr[9] = 6;
+    return new Blob([Uint8Array.of(137, 80, 78, 71, 13, 10, 26, 10), chunk('IHDR', ihdr), chunk('sRGB', Uint8Array.of(0)), chunk('IDAT', await ND.Formats.deflate(raw)), chunk('IEND', new Uint8Array(0))], { type: 'image/png' });
+  };
+  ND.Deep = D;
 })();
 
 </script>
@@ -6927,10 +7043,24 @@ void main() {
       licence: 'Apache 2.0', commercial: true, licenceNote: 'Free to use on any image, including commercial work.',
     },
   };
+  // object removal (inpainting)
+  MODELS.migan = {
+    id: 'migan', kind: 'inpaint', name: 'MI-GAN', title: 'Fast object removal',
+    best: 'Removes people, wires, spots and clutter in a second or two — great for everyday clean-ups',
+    url: HF + 'andraniksargsyan/migan/resolve/main/migan_pipeline_v2.onnx', size: 28079181,
+    licence: 'MIT', commercial: true, licenceNote: 'Free to use on any image, including commercial work.',
+  };
+  MODELS.lama = {
+    id: 'lama', kind: 'inpaint', name: 'LaMa', title: 'Best-quality object removal',
+    best: 'Best on big objects and repeating textures (brick, grass, fabric, sky); slower',
+    url: HF + 'Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx', size: 208044816,
+    licence: 'Apache 2.0', commercial: true, licenceNote: 'Free to use on any image, including commercial work.',
+  };
   const ORDER = ['isnet', 'modnet', 'rmbg'];
   const UPSCALERS = ['sr2', 'sr4'];
+  const INPAINT = ['migan', 'lama'];
 
-  const AI = { MODELS, ORDER, UPSCALERS, downloads: {} };
+  const AI = { MODELS, ORDER, UPSCALERS, INPAINT, downloads: {} };
 
   // Models that must run on the CPU: known ones, plus any that failed on the graphics card here before.
   const CPU_KEY = 'nd-ai-cpu-models';
@@ -6954,7 +7084,7 @@ void main() {
   };
   AI.status = async function () {
     const out = {};
-    for (const id of ORDER.concat(UPSCALERS)) out[id] = { downloaded: await AI.isDownloaded(id), downloading: !!AI.downloads[id] };
+    for (const id of ORDER.concat(UPSCALERS, INPAINT)) out[id] = { downloaded: await AI.isDownloaded(id), downloading: !!AI.downloads[id] };
     return out;
   };
   AI.storage = async function () {
@@ -7253,6 +7383,67 @@ void main() {
       ox.globalCompositeOperation = 'destination-in'; ox.drawImage(a, 0, 0); ox.globalCompositeOperation = 'source-over';
     }
     return out;
+  };
+
+  /* ---------- AI remove (inpainting) ----------
+   * src: the picture; hole: a canvas whose alpha marks what to remove. The model works on a square around
+   * the marked area (enough surroundings to fill from) at 512 × 512; the result is scaled back and blended
+   * in with a soft edge. Returns { patch: full-size canvas with only the filled area, seconds }. */
+  AI.inpaint = async function (id, src, hole, status) {
+    status = status || (() => {});
+    const t0 = performance.now(), W = src.width, H = src.height, S = 512;
+    const bb = ND.Sel.contentBBox(hole);
+    if (!bb) throw new Error('nothing is marked to remove');
+    await load(id, status);
+    const prevType = U.colorType; U.colorType = 'unorm8'; // the model sees 8-bit pixels
+    try {
+      let side = Math.max(256, Math.round(Math.max(bb.w, bb.h) * 2.2));
+      const cw = Math.min(side, W), ch = Math.min(side, H);
+      const x0 = U.clamp(Math.round(bb.x + bb.w / 2 - cw / 2), 0, W - cw), y0 = U.clamp(Math.round(bb.y + bb.h / 2 - ch / 2), 0, H - ch);
+      const k = S / Math.max(cw, ch), sw = Math.max(8, Math.round(cw * k)), sh = Math.max(8, Math.round(ch * k));
+      // picture: the crop scaled to fit, edges stretched to fill the square
+      const im = U.canvas(S, S), ix = U.ctx(im);
+      ix.fillStyle = '#ffffff'; ix.fillRect(0, 0, S, S);
+      ix.imageSmoothingQuality = 'high';
+      ix.drawImage(src, x0, y0, cw, ch, 0, 0, sw, sh);
+      if (sw < S) ix.drawImage(im, sw - 1, 0, 1, sh, sw, 0, S - sw, sh);
+      if (sh < S) ix.drawImage(im, 0, sh - 1, S, 1, 0, sh, S, S - sh);
+      // mask: grown a few pixels so the edge of the object goes too
+      const mk = U.canvas(S, S), mx = U.ctx(mk), grow = Math.max(2, Math.round(3 * Math.max(1, k)));
+      for (let a = 0; a < 8; a++) mx.drawImage(hole, x0, y0, cw, ch, Math.cos(a * Math.PI / 4) * grow, Math.sin(a * Math.PI / 4) * grow, sw, sh);
+      mx.drawImage(hole, x0, y0, cw, ch, 0, 0, sw, sh);
+      const pd = ix.getImageData(0, 0, S, S).data, md = mx.getImageData(0, 0, S, S).data, n = S * S;
+      const lama = id === 'lama', img = lama ? new Float32Array(3 * n) : new Uint8Array(3 * n), msk = lama ? new Float32Array(n) : new Uint8Array(n);
+      for (let i = 0; i < n; i++) {
+        const isHole = md[i * 4 + 3] > 24;
+        for (let c = 0; c < 3; c++) img[c * n + i] = lama ? pd[i * 4 + c] / 255 : pd[i * 4 + c];
+        msk[i] = lama ? (isHole ? 1 : 0) : isHole ? 0 : 255; // MI-GAN: 255 = keep · LaMa: 1 = remove
+      }
+      const type = lama ? 'float32' : 'uint8';
+      status(AI.provider === 'webgpu' ? 'Removing (graphics card)…' : 'Removing… (CPU' + (lama ? ', about 5–20 s' : ', a few seconds') + ')');
+      const feeds = () => [{ data: img.slice(), dims: [1, 3, S, S], type }, { data: msk.slice(), dims: [1, 1, S, S], type }];
+      let res;
+      try { res = await AI.call({ type: 'run', feeds: feeds() }); } catch (e) {
+        if (AI.provider !== 'webgpu') throw e;
+        console.warn('AI remove failed on WebGPU, using the CPU —', e.message);
+        AI.markCpuOnly(id); resetWorker(); await load(id, status);
+        res = await AI.call({ type: 'run', feeds: feeds() });
+      }
+      const o = res.data, out = U.canvas(S, S), ox = U.ctx(out), oi = ox.createImageData(S, S);
+      for (let i = 0; i < n; i++) { for (let c = 0; c < 3; c++) oi.data[i * 4 + c] = o[c * n + i]; oi.data[i * 4 + 3] = 255; }
+      ox.putImageData(oi, 0, 0);
+      U.colorType = prevType;
+      // back to full size, kept only where something was removed (soft edge)
+      const patch = U.canvas(W, H), px = U.ctx(patch);
+      px.imageSmoothingQuality = 'high';
+      px.drawImage(out, 0, 0, sw, sh, x0, y0, cw, ch);
+      const soft = U.canvas(W, H), sx = U.ctx(soft), g = Math.max(2, Math.round(grow / k));
+      sx.filter = 'blur(' + Math.max(1, g / 2) + 'px)';
+      for (let a = 0; a < 8; a++) sx.drawImage(hole, Math.cos(a * Math.PI / 4) * g * 0.7, Math.sin(a * Math.PI / 4) * g * 0.7);
+      sx.drawImage(hole, 0, 0);
+      px.globalCompositeOperation = 'destination-in'; px.drawImage(soft, 0, 0);
+      return { patch, rect: { x: x0, y: y0, w: cw, h: ch }, seconds: (performance.now() - t0) / 1000, provider: res.provider };
+    } finally { U.colorType = prevType; }
   };
 
   /* AI quick select: paint over things and get the AI-detected objects under the strokes.
@@ -8554,7 +8745,7 @@ void main() {
   function project(doc, enc) {
     const smartOut = (sm) => (sm ? { png: enc(sm.src), m: sm.m, mesh: sm.mesh, g: sm.g || 0, contents: sm.contents ? project(sm.contents, enc) : null } : null);
     return {
-      app: 'pigment', version: 3, width: doc.width, height: doc.height, name: doc.name, backgroundColor: doc.backgroundColor,
+      app: 'pigment', version: 3, depth: doc.depth || 8, width: doc.width, height: doc.height, name: doc.name, backgroundColor: doc.backgroundColor,
       guides: doc.guides, assistants: doc.assistants, paper: doc.paper || null, paths: doc.paths || [], activePath: doc.activePath || null, anim: doc.anim || null,
       layers: flatList(doc).map(({ node: n, depth }) => ({
         type: n.type, name: n.name, visible: n.visible, opacity: n.opacity, blendMode: n.blendMode, isGroup: n.isGroup, depth,
@@ -8568,12 +8759,12 @@ void main() {
       })),
     };
   }
-  function serialize(doc) { return JSON.stringify(project(doc, (c) => c.toDataURL('image/png'))); }
+  function serialize(doc) { return JSON.stringify(project(doc, (c) => (ND.Deep && ND.Deep.is16(c) ? ND.Deep.encodeSync(c) : c.toDataURL('image/png')))); }
   const blobToDataURL = (b) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(b); });
   // Same file format, but PNG encoding runs asynchronously so big documents don't freeze the page.
   async function serializeAsync(doc) {
     const list = [], obj = project(doc, (c) => { list.push(c); return '#' + (list.length - 1); });
-    const urls = await Promise.all(list.map(async (c) => blobToDataURL(await U.canvasToBlob(c, 'image/png'))));
+    const urls = await Promise.all(list.map(async (c) => blobToDataURL(await (ND.Deep ? ND.Deep.blobFor(c) : U.canvasToBlob(c, 'image/png')))));
     const fix = (v) => (typeof v === 'string' && v[0] === '#' ? urls[+v.slice(1)] : v);
     const fixAll = (o) => o.layers.forEach((l) => { l.png = fix(l.png); l.mask = fix(l.mask); if (l.frames) l.frames.forEach((f) => { f.png = fix(f.png); }); if (l.smart) { l.smart.png = fix(l.smart.png); if (l.smart.contents) fixAll(l.smart.contents); } });
     fixAll(obj);
@@ -8582,11 +8773,20 @@ void main() {
   async function deserialize(text, blobs) {
     const s = typeof text === 'string' ? JSON.parse(text) : text;
     const load = async (ref) => {
+      // 16-bit pixels are stored losslessly in their own format
+      if (ND.Deep) {
+        const b = blobs && typeof ref === 'string' && ref[0] === '#' ? blobs[+ref.slice(1)] : null;
+        if (b && b.type === 'application/x-nd16') return ND.Deep.loadRef(b);
+        if (ND.Deep.isRef(ref)) return ND.Deep.loadRef(ref);
+      }
       if (blobs && typeof ref === 'string' && ref[0] === '#') return U.blobToImage(blobs[+ref.slice(1)]);
       return U.loadImage(ref);
     };
     if (s.app !== 'pigment') throw new Error('Not a Neon Draw project');
+    const prevType = U.colorType;
+    if (ND.Deep) ND.Deep.use(s.depth === 16 ? 16 : 8);
     const doc = new ND.Doc(s.width, s.height, null);
+    doc.depth = s.depth === 16 && ND.Deep && ND.Deep.supported() ? 16 : 8;
     doc.name = s.name || 'Untitled';
     doc.backgroundColor = s.backgroundColor || null;
     doc.guides = Array.isArray(s.guides) ? s.guides : [];
@@ -8630,6 +8830,7 @@ void main() {
     doc.active = doc.firstLayer();
     if (ND.Anim && s.anim) { doc.anim = ND.Anim.normalise(s.anim); ND.Anim.apply(doc); }
     doc.invalidateAll();
+    U.colorType = prevType;
     return doc;
   }
   // Pixels for interchange formats: masks and layer effects are baked in.
@@ -8648,7 +8849,7 @@ void main() {
   // Autosave stores layer PNGs as Blobs (encoded off the main thread) instead of one giant JSON string.
   async function autosaveRecord(doc) {
     const list = [], meta = project(doc, (c) => { list.push(c); return '#' + (list.length - 1); });
-    const blobs = await Promise.all(list.map((c) => U.canvasToBlob(c, 'image/png')));
+    const blobs = await Promise.all(list.map((c) => (ND.Deep ? ND.Deep.blobFor(c) : U.canvasToBlob(c, 'image/png'))));
     return { format: 'ndraw-parts', meta, blobs };
   }
   async function autosave(doc) {
@@ -9536,6 +9737,7 @@ void main() {
     { id: 'heal', label: 'Spot healing brush', key: 'J', icon: 'heal', group: 'Retouch' },
     { id: 'patch', label: 'Patch (drag a selection onto good texture)', key: '', icon: 'patch', group: 'Retouch' },
     { id: 'redeye', label: 'Red-eye removal', key: '', icon: 'redeye', group: 'Retouch' },
+    { id: 'airemove', label: 'AI remove — paint over (or select) something and AI fills in what’s behind it', key: '', icon: 'airemove', group: 'Retouch' },
     { id: 'liquify', label: 'Liquify (push, bloat, pinch, twirl)', key: '', icon: 'liquify', group: 'Retouch' },
     { id: 'sel-rect', label: 'Rectangular select', key: 'R', icon: 'sel-rect', group: 'Select' },
     { id: 'sel-ellipse', label: 'Elliptical select', key: '', icon: 'sel-ellipse', group: 'Select' },
@@ -9581,7 +9783,7 @@ void main() {
     grid: false, gridSize: 64, pixelGrid: true, wrap: false, showSymmetry: true, hideUI: false,
     dockWidth: 300, collapsed: {},
     touchMode: 'auto',
-    rightClick: 'palette', favBrushes: null, recentCommands: [], smartAI: false, aiModel: null, aiRemember: false, aiClean: true, toolboxMode: 'left', toolboxCols: 0, toolboxPos: null, dockCols: 1, dockLayout: null, smartFilter: false, strokePressure: true, showTimeline: false, aiUpscaler: 'sr2', predictPoints: false, prefsRev: 2, proofView: false, gamutWarn: false, pdfDpi: 300,
+    rightClick: 'palette', favBrushes: null, recentCommands: [], smartAI: false, aiModel: null, aiRemember: false, aiClean: true, toolboxMode: 'left', toolboxCols: 0, toolboxPos: null, dockCols: 1, dockLayout: null, smartFilter: false, strokePressure: true, showTimeline: false, aiUpscaler: 'sr2', predictPoints: false, prefsRev: 2, proofView: false, gamutWarn: false, pdfDpi: 300, newDepth: 8, pressureOn: true, pressureSens: 50, airMode: 'paint', airSize: 40, airAll: true, airNewLayer: true, airAuto: true, aiInpaint: 'migan',
   });
 
   const App = {
@@ -9695,6 +9897,7 @@ void main() {
     }
     if (this.docUnsub) this.docUnsub();
     this.doc = doc;
+    if (ND.Deep) ND.Deep.use(doc.depth || 8); // new canvases match this document's colour depth
     this.docUnsub = doc.on((type) => this.emit('doc', type));
     doc.wrapAround = this.state.wrap;
     this.emit('docchange');
@@ -9727,8 +9930,11 @@ void main() {
     return true;
   };
   App.cycleDoc = function (dir) { const n = this.docs.length; if (n > 1) this.showDoc(this.docs[(this.docs.indexOf(this.doc) + dir + n) % n]); };
-  App.newDocument = function (w, h, bg, name, paper, paperBackground) {
+  App.newDocument = function (w, h, bg, name, paper, paperBackground, depth) {
+    const deep = depth === 16 && ND.Deep && ND.Deep.supported();
+    if (ND.Deep) ND.Deep.use(deep ? 16 : 8);
     const d = new ND.Doc(w, h, bg);
+    d.depth = deep ? 16 : 8;
     d.name = name || 'Untitled';
     if (!bg) d.root.children[0].name = 'Layer 1';
     d.paper = paper ? ND.Paper.normalise(paper) : null;
@@ -9797,14 +10003,17 @@ void main() {
         this.toast('Krita file opened · ' + doc.allLayers().length + ' layers' + (doc.importNote ? ' · ' + doc.importNote : ''), doc.importNote ? 6000 : 2000);
       } else if (n.endsWith('.tif') || n.endsWith('.tiff')) {
         const t = await ND.Formats.readTIFF(await file.arrayBuffer());
+        if (ND.Deep) ND.Deep.use(t.canvas._nd16 ? 16 : 8);
         // an embedded RGB colour profile (Adobe RGB, ProPhoto…) is converted to the sRGB working space
         let note = '';
         if (t.icc && !t.cmyk) { try { const P = ND.Colour.parseICC(t.icc); if (!/srgb/i.test(P.name || '') && ND.Colour.convertToSRGB(t.canvas, P)) note = ' · converted from ' + (P.name || 'its colour profile') + ' to sRGB'; } catch (e) { /* unreadable profile: use as is */ } }
         if (t.cmyk) note = ' · CMYK converted to RGB (' + ND.Colour.profileName + ')';
         if (t.bits === 16) note += ' · 16-bit read as 8-bit';
         const d = new ND.Doc(t.canvas.width, t.canvas.height, null);
+        d.depth = t.canvas._nd16 ? 16 : 8;
         d.root.children[0].name = 'Background';
         U.ctx(d.root.children[0].canvas).drawImage(t.canvas, 0, 0);
+        if (d.depth === 16) note = note.replace(' · 16-bit read as 8-bit', '') + ' · opened as a 16-bit document';
         d.name = file.name.replace(/\.[^.]+$/, '');
         d.invalidateAll();
         this.setDoc(d);
@@ -9878,6 +10087,7 @@ void main() {
   App.exportImage = async function (fmt, quality) {
     const d = this.doc;
     let c = d.flatCopy();
+    if (fmt === 'png' && d.depth === 16 && ND.Deep) { U.download(U.safeName(d.name) + '.png', await ND.Deep.png16(c)); this.toast('Exported 16-bit PNG'); return; }
     if (fmt === 'jpeg') { const j = U.canvas(c.width, c.height), x = U.ctx(j); x.fillStyle = d.backgroundColor || '#ffffff'; x.fillRect(0, 0, j.width, j.height); x.drawImage(c, 0, 0); c = j; }
     let blob = await U.canvasToBlob(c, 'image/' + fmt, quality || 0.92);
     if (!blob) { this.toast('This browser cannot export ' + fmt.toUpperCase()); return; }
@@ -9899,7 +10109,7 @@ void main() {
     this.toast('Saving TIFF…', 20000);
     try {
       let c = d.flatCopy();
-      const b = await ND.Formats.writeTIFF(c, { cmyk, icc: cmyk ? (ND.Colour.proof && ND.Colour.proofBytes) || null : ND.Colour.srgbICC(), dpi: this.state.pdfDpi || 300 });
+      const b = await ND.Formats.writeTIFF(c, { bits16: !cmyk && d.depth === 16, cmyk, icc: cmyk ? (ND.Colour.proof && ND.Colour.proofBytes) || null : ND.Colour.srgbICC(), dpi: this.state.pdfDpi || 300 });
       U.download(U.safeName(d.name) + (cmyk ? '-cmyk' : '') + '.tif', b);
       this.toast(cmyk ? 'Saved CMYK TIFF for print (' + ND.Colour.profileName + ')' : 'Saved TIFF');
     } catch (e) { this.toast('Could not save TIFF: ' + e.message, 5000); }
@@ -10423,13 +10633,13 @@ void main() {
       fillPattern: s.fillPattern, gradType: s.gradType, gradTo: s.gradTo, dockWidth: s.dockWidth, collapsed: s.collapsed,
       gridSize: s.gridSize, palette: App.palette, palettes: App.userPalettes, shapeFill: s.shapeFill, shapeStroke: s.shapeStroke, shapeWidth: s.shapeWidth,
       lineUseBrush: s.lineUseBrush, touchMode: s.touchMode, healSize: s.healSize, liqSize: s.liqSize, liqStrength: s.liqStrength, liqMode: s.liqMode, fillGap: s.fillGap, rulers: s.rulers,
-      rightClick: s.rightClick, favBrushes: s.favBrushes, lastPaper: s.lastPaper, harmony: s.harmony, smartAI: s.smartAI, aiModel: s.aiModel, aiRemember: s.aiRemember, aiClean: s.aiClean, toolboxMode: s.toolboxMode, toolboxCols: s.toolboxCols, toolboxPos: s.toolboxPos, dockCols: s.dockCols, dockLayout: s.dockLayout, smartFilter: s.smartFilter, strokePressure: s.strokePressure, showTimeline: s.showTimeline, aiUpscaler: s.aiUpscaler, predictPoints: s.predictPoints, proofView: s.proofView, gamutWarn: s.gamutWarn, pdfDpi: s.pdfDpi, prefsRev: s.prefsRev, recentCommands: s.recentCommands, maskView: s.maskView, maskParams: s.maskParams,
+      rightClick: s.rightClick, favBrushes: s.favBrushes, lastPaper: s.lastPaper, harmony: s.harmony, smartAI: s.smartAI, aiModel: s.aiModel, aiRemember: s.aiRemember, aiClean: s.aiClean, toolboxMode: s.toolboxMode, toolboxCols: s.toolboxCols, toolboxPos: s.toolboxPos, dockCols: s.dockCols, dockLayout: s.dockLayout, smartFilter: s.smartFilter, strokePressure: s.strokePressure, showTimeline: s.showTimeline, aiUpscaler: s.aiUpscaler, predictPoints: s.predictPoints, proofView: s.proofView, gamutWarn: s.gamutWarn, pdfDpi: s.pdfDpi, newDepth: s.newDepth, pressureOn: s.pressureOn, pressureSens: s.pressureSens, airMode: s.airMode, airSize: s.airSize, airAll: s.airAll, airNewLayer: s.airNewLayer, airAuto: s.airAuto, aiInpaint: s.aiInpaint, prefsRev: s.prefsRev, recentCommands: s.recentCommands, maskView: s.maskView, maskParams: s.maskParams,
     });
   }, 600);
   App.loadPrefs = function () {
     const p = ND.Store.prefs(), s = this.state;
     if (p.brush) s.brush = ND.Brush.normalise(p.brush);
-    ['brushName', 'fg', 'bg', 'recent', 'eraserSize', 'toolSettings', 'stamp', 'stampSize', 'stampMode', 'stampRandom', 'fillPattern', 'gradType', 'gradTo', 'dockWidth', 'collapsed', 'gridSize', 'shapeFill', 'shapeStroke', 'shapeWidth', 'lineUseBrush', 'touchMode', 'healSize', 'liqSize', 'liqStrength', 'liqMode', 'fillGap', 'rulers', 'rightClick', 'favBrushes', 'lastPaper', 'harmony', 'smartAI', 'aiModel', 'aiRemember', 'aiClean', 'toolboxMode', 'toolboxCols', 'toolboxPos', 'dockCols', 'dockLayout', 'smartFilter', 'strokePressure', 'showTimeline', 'aiUpscaler', 'predictPoints', 'proofView', 'gamutWarn', 'pdfDpi', 'recentCommands', 'maskView', 'maskParams'].forEach((k) => { if (p[k] != null) s[k] = p[k]; });
+    ['brushName', 'fg', 'bg', 'recent', 'eraserSize', 'toolSettings', 'stamp', 'stampSize', 'stampMode', 'stampRandom', 'fillPattern', 'gradType', 'gradTo', 'dockWidth', 'collapsed', 'gridSize', 'shapeFill', 'shapeStroke', 'shapeWidth', 'lineUseBrush', 'touchMode', 'healSize', 'liqSize', 'liqStrength', 'liqMode', 'fillGap', 'rulers', 'rightClick', 'favBrushes', 'lastPaper', 'harmony', 'smartAI', 'aiModel', 'aiRemember', 'aiClean', 'toolboxMode', 'toolboxCols', 'toolboxPos', 'dockCols', 'dockLayout', 'smartFilter', 'strokePressure', 'showTimeline', 'aiUpscaler', 'predictPoints', 'proofView', 'gamutWarn', 'pdfDpi', 'newDepth', 'pressureOn', 'pressureSens', 'airMode', 'airSize', 'airAll', 'airNewLayer', 'airAuto', 'aiInpaint', 'recentCommands', 'maskView', 'maskParams'].forEach((k) => { if (p[k] != null) s[k] = p[k]; });
     if (p.text) Object.assign(s.text, p.text);
     // 2.6.1 changed two defaults: rulers on, pen prediction off — apply them once to older settings
     if (!(p.prefsRev >= 2)) { s.rulers = true; s.predictPoints = false; }
@@ -11315,10 +11525,13 @@ void main() {
   let spaceDown = false, penSeen = false;
   V.isSpaceDown = () => spaceDown;
   function local(e) { const r = cv.getBoundingClientRect(); return { sx: e.clientX - r.left, sy: e.clientY - r.top }; }
+  // pen pressure, with the sensitivity setting (50% = as the pen reports it; higher = lighter touch needed)
   function pressureOf(e) {
-    if (e.pointerType === 'pen') return e.pressure > 0 ? e.pressure : 0.05;
-    return 1;
+    if (e.pointerType !== 'pen' || App.state.pressureOn === false) return 1;
+    const raw = e.pressure > 0 ? e.pressure : 0.05, s = App.state.pressureSens == null ? 50 : App.state.pressureSens;
+    return Math.max(0.02, Math.min(1, Math.pow(raw, Math.pow(2, (50 - s) / 25))));
   }
+  V.pressureOf = pressureOf;
   function pt(e) { const l = local(e), p = toDoc(l.sx, l.sy); return { x: p.x, y: p.y, p: pressureOf(e), tx: e.tiltX || 0, ty: e.tiltY || 0, t: e.timeStamp }; }
 
   function bindInput() {
@@ -11920,6 +12133,7 @@ void main() {
       cx.save(); cx.strokeStyle = 'rgba(255,255,255,0.7)'; cx.setLineDash([10 * lw, 6 * lw]); cx.lineWidth = 2 * lw; cx.strokeRect(0, 0, d.width, d.height); cx.restore();
     }
     if (ND.Pen) ND.Pen.overlay(cx, lw, zr);
+    if (ND.AIRemove) ND.AIRemove.overlay(cx, lw);
     const VV = V();
     // smoothing "string": from the line's end to the pen
     if (VV.stroke && VV.stroke.rope && VV.stroke.smooth && VV.stroke.lastRaw && VV.stroke.s.stabilizer >= 0.15) {
@@ -12005,6 +12219,7 @@ void main() {
     }
     // move an existing guide with the move tool
     if (tool === 'pen' && ND.Pen) return ND.Pen.down(e, p);
+    if (tool === 'airemove' && ND.AIRemove) return ND.AIRemove.down(e, p);
     if (tool === 'move' && d.guides.length) {
       for (let i = 0; i < d.guides.length; i++) {
         const g = d.guides[i], s = V().toScreen(g.axis === 'x' ? g.pos : p.x, g.axis === 'y' ? g.pos : p.y);
@@ -12083,6 +12298,7 @@ void main() {
     const dr = V().drag, d = App.doc;
     if (!dr || !dr.tool.startsWith('x-')) return false;
     if (dr.tool === 'x-pen') ND.Pen.move(e, p);
+    else if (dr.tool === 'x-airemove') ND.AIRemove.move(e, p);
     else if (dr.tool === 'x-guide') { dr.pos = dr.axis === 'x' ? Math.round(p.x) : Math.round(p.y); dr.out = dr.axis === 'x' ? l.sx < RULER : l.sy < RULER; V().request(); }
     else if (dr.tool === 'x-assist') { const q = e.shiftKey ? p : T.snap(p); dr.h.x = q.x; dr.h.y = q.y; V().request(); }
     else if (dr.tool === 'x-patch') { dr.cur = p; V().request(); }
@@ -12104,6 +12320,7 @@ void main() {
   T.up = function (e, dr) {
     const d = App.doc;
     if (dr.tool === 'x-pen') { ND.Pen.up(dr); return; }
+    if (dr.tool === 'x-airemove') { ND.AIRemove.up(dr); return; }
     if (dr.tool === 'x-guide') {
       const g = d.guides.slice();
       if (dr.index >= 0) g.splice(dr.index, 1);
@@ -12730,6 +12947,7 @@ void main() {
       add(brushSlider('Opacity', 'opacity', 0.01, 1, Object.assign({ step: 0.01 }, pct)));
       add(brushSlider('Flow', 'flow', 0.01, 1, Object.assign({ step: 0.01 }, pct)));
       add(brushSlider('Smoothing', 'stabilizer', 0, 1, Object.assign({ step: 0.01 }, pct)));
+      add(stateCheck('Pressure', 'pressureOn', 'Use pen pressure — turn off for an even line'), stateSlider('Sensitivity', 'pressureSens', 0, 100, { fmt: (v) => Math.round(v) + '%', title: 'How lightly you need to press: higher = a light touch gives a full stroke' }));
       if (!ND.Brush.DIRECT[s.brush.engine]) add(C.select('Blend', ND.Blend.MODES.map((m) => ({ value: m.id, label: m.label, group: m.cat })), () => s.brush.blend, (v) => App.setBrush({ blend: v })));
       add(...T.symmetryControls());
       if (tool === 'brush') {
@@ -12795,6 +13013,16 @@ void main() {
       T.textOptions(add);
     } else if (tool === 'stamp') {
       T.stampOptions(add);
+    } else if (tool === 'airemove') {
+      const R = ND.AIRemove;
+      add(C.segmented([['paint', 'Paint over it'], ['select', 'Use selection']], () => S().airMode, (v) => { App.set('airMode', v); render(); }));
+      if (S().airMode !== 'select') add(stateSlider('Size', 'airSize', 4, 400, { log: true, unit: 'px', fmt: (v) => Math.round(v) }));
+      add(C.select('Model', [['migan', 'MI-GAN — fast (28 MB)'], ['lama', 'LaMa — best quality (208 MB)']], () => S().aiInpaint || 'migan', (v) => App.set('aiInpaint', v)));
+      add(stateCheck('Sample all layers', 'airAll', 'Use everything you see, not just the active layer'), stateCheck('On a new layer', 'airNewLayer', 'Put the result on its own layer (you can erase or hide it later)'));
+      if (S().airMode !== 'select') add(stateCheck('Remove when I lift the pen', 'airAuto'));
+      add(C.button(S().airMode === 'select' ? 'Remove selection' : 'Remove', () => R.run(S().airMode === 'select'), { cls: 'sm primary', icon: 'airemove' }));
+      if (S().airMode !== 'select') add(C.button('Clear', () => R.clear(), { cls: 'sm' }));
+      add(C.hint(S().airMode === 'select' ? 'Select the thing to remove with any selection tool, then click Remove selection' : 'Paint over what to remove (red) — it disappears when you lift the pen'));
     } else if (tool === 'pen') {
       const d = App.doc, L = d.active && d.active.shapeData ? d.active : null;
       if (L) {
@@ -14259,18 +14487,20 @@ void main() {
       b.addEventListener('click', () => { w.value = pw; hh.value = ph; chips.querySelectorAll('.nd-chipbtn').forEach((q) => q.classList.toggle('active', q === b)); info(); });
       chips.appendChild(b);
     });
+    let depth = App.state.newDepth === 16 && ND.Deep.supported() ? 16 : 8;
+    const depthSeg = C.segmented([[8, '8-bit'], [16, '16-bit', 'Smoother gradients and edits, twice the memory']], () => depth, (v) => { if (+v === 16 && !ND.Deep.supported()) { App.toast('This browser can’t do 16-bit canvases yet — use Chrome or Edge'); return; } depth = +v; App.set('newDepth', depth); info(); });
     const swapB = C.button('⇄ Portrait / landscape', () => { const t = w.value; w.value = hh.value; hh.value = t; info(); }, { cls: 'sm' });
     const inf = h('div.nd-hint');
-    const info = () => { const mp = (w.value * hh.value) / 1e6; inf.textContent = (+w.value) + ' × ' + (+hh.value) + ' px · ' + mp.toFixed(1) + ' MP · about ' + U.fmtBytes(w.value * hh.value * 4) + ' per layer' + (mp > 20 ? ' — large canvases are slower' : ''); };
+    const info = () => { const mp = (w.value * hh.value) / 1e6; inf.textContent = (+w.value) + ' × ' + (+hh.value) + ' px · ' + mp.toFixed(1) + ' MP · about ' + U.fmtBytes(w.value * hh.value * (depth === 16 ? 8 : 4)) + ' per layer' + (mp > 20 ? ' — large canvases are slower' : ''); };
     w.addEventListener('input', info); hh.addEventListener('input', info);
     info();
-    D.modal('New document', h('div', chips, field('Name', name), h('div.nd-row', field('Width', w, 'px'), field('Height', hh, 'px'), swapB), inf, h('div.nd-row', h('span.nd-lbl', 'Background'), bgSeg, bgCol), h('div.nd-mini-title', 'Paper'), paperBox), [
+    D.modal('New document', h('div', chips, field('Name', name), h('div.nd-row', field('Width', w, 'px'), field('Height', hh, 'px'), swapB), inf, h('div.nd-row', h('span.nd-lbl', 'Background'), bgSeg, bgCol), h('div.nd-row', h('span.nd-lbl', 'Colour depth'), depthSeg), h('div.nd-mini-title', 'Paper'), paperBox), [
       { label: 'Cancel' },
       { label: 'Create', primary: true, action: () => {
         const W = U.clamp(Math.round(+w.value || 1920), 1, 16384), H = U.clamp(Math.round(+hh.value || 1080), 1, 16384);
         const bg = bgMode === 'paper' ? pp.tint : bgMode === 'white' ? '#ffffff' : bgMode === 'transparent' ? null : bgMode === 'bg' ? App.state.bg : bgCol.value;
         App.set('lastPaper', Object.assign({}, pp));
-        App.newDocument(W, H, bg, name.value || 'Untitled', pp.type === 'none' ? null : pp, bgMode === 'paper');
+        App.newDocument(W, H, bg, name.value || 'Untitled', pp.type === 'none' ? null : pp, bgMode === 'paper', depth);
       } },
     ], { wide: true });
   };
@@ -14531,6 +14761,8 @@ void main() {
     Image: [
       { label: 'Scale image…', run: () => D().scaleImage() },
       { label: 'Enlarge with AI (2× / 4×)…', run: () => App.aiUpscale() },
+      { label: 'Mode: 8 bits per channel', check: () => (doc().depth || 8) === 8, run: () => { const m = ND.Deep.convert(doc(), 8); App.toast(m || 'Converted to 8 bits per channel'); App.emit('tabs'); } },
+      { label: 'Mode: 16 bits per channel', check: () => doc().depth === 16, run: () => { const m = ND.Deep.convert(doc(), 16); App.toast(m || 'Converted to 16 bits per channel — smoother tones from now on (existing pixels keep their 8-bit values)', 5000); App.emit('tabs'); } },
       { label: 'Canvas size…', run: () => D().canvasSize() },
       { label: 'Crop to selection', run: () => App.cropToSelection() },
       { label: 'Trim transparent edges', run: () => App.trim() },
@@ -14564,6 +14796,7 @@ void main() {
       { label: 'Convert to smart object', run: () => App.convertToSmart() },
       { label: 'Edit smart object contents', run: () => App.editSmart() },
       { label: 'Rasterize smart object', run: () => App.rasterizeSmart() },
+      { label: 'Remove selection with AI', run: () => App.aiRemoveSelection() },
       { label: 'Colourise line art (lazy brush)…', run: () => App.startColourise() },
       { label: 'Vector shape from path', run: () => App.pathToShape() },
       { sep: true },
@@ -15174,7 +15407,7 @@ void main() {
       usage.textContent = est ? 'This site is using ' + MB(est.usage || 0) + ' of browser storage (about ' + Math.round((est.quota || 0) / 1e9) + ' GB available).' : '';
     };
     const cards = AI.ORDER.map((id) => card(id, { manage: true, onChange: showUsage }));
-    const upCards = AI.UPSCALERS.map((id) => card(id, { manage: true, onChange: showUsage }));
+    const upCards = AI.UPSCALERS.map((id) => card(id, { manage: true, onChange: showUsage })), inCards = AI.INPAINT.map((id) => card(id, { manage: true, onChange: showUsage }));
     const body = h('div.nd-ai',
       h('p', 'AI models find the subject of a photo for Remove background, AI masks and AI selections, and enlarge pictures (Image ▸ Enlarge with AI). Download the ones you want once; they are stored in this browser and then work offline. Images are processed on your own computer and are never uploaded.'),
       why ? unsupportedBox(why) : null,
@@ -15182,9 +15415,11 @@ void main() {
       ...cards,
       h('h4.nd-ai-sec', 'Upscalers (enlarge pictures)'),
       ...upCards,
+      h('h4.nd-ai-sec', 'Object removal (AI remove tool)'),
+      ...inCards,
       h('div.nd-hint', 'Speed: with a graphics card that supports WebGPU (Chrome, Edge) a picture takes about a second; on the CPU expect 2–3 s for MODNet and 10–40 s for ISNet / RMBG. ISNet always uses the CPU for now. If a model ever fails on the graphics card, Neon Draw switches it to the CPU automatically.'),
       usage);
-    if (why) cards.concat(upCards).forEach((c) => c.querySelectorAll('button').forEach((b) => { b.disabled = true; }));
+    if (why) cards.concat(upCards, inCards).forEach((c) => c.querySelectorAll('button').forEach((b) => { b.disabled = true; }));
     showUsage();
     D().modal('AI models', body, [{ label: 'Close', primary: true }], { wide: true, noFocus: true });
   };
@@ -16228,7 +16463,7 @@ void main() {
       const active = d === App.doc, mark = d._fileDirty && d.fileHandle ? '● ' : '';
       const close = h('span.nd-tab-x', { title: 'Close (Ctrl+Alt+W)' }, '×');
       const tab = h('div.nd-tab' + (active ? '.active' : '') + (d.smartParent ? '.smart' : ''), { role: 'tab', draggable: 'true', title: d.name + ' — ' + d.width + ' × ' + d.height + (d.fileHandle ? '\nSaved as ' + d.fileHandle.name : '') + (d.smartParent ? '\nSmart object contents — save (Ctrl+S) or close this tab to update the layer' : '') + (active ? '\nDouble-click to rename' : '') },
-        h('span.nd-tab-name', mark + d.name), h('span.nd-tab-size', d.width + '×' + d.height), close);
+        h('span.nd-tab-name', mark + d.name), h('span.nd-tab-size', d.width + '×' + d.height + (d.depth === 16 ? ' · 16-bit' : '')), close);
       tab.addEventListener('click', (e) => { if (e.target === close) { App.closeDoc(d); return; } App.showDoc(d); });
       tab.addEventListener('auxclick', (e) => { if (e.button === 1) { e.preventDefault(); App.closeDoc(d); } });
       tab.addEventListener('dblclick', (e) => { if (e.target === close || !active) return; const n = window.prompt('Document name', d.name); if (n) { d.name = n; render(); App.emit('saved'); } });
@@ -16252,6 +16487,85 @@ void main() {
   App.on('doc', (t) => { if (t === 'resize') render(); });
   ND.Tabs = { render };
   setTimeout(build, 0);
+})();
+
+</script>
+  <script>/* js/ui/airemove.js */
+/* Neon Draw — AI remove tool: paint over something (or select it) and an AI model fills the area with what
+ * would be behind it. Runs on your computer (MI-GAN or LaMa, downloaded once). */
+'use strict';
+(function () {
+  const U = ND.U, App = ND.App, AI = ND.AI;
+  const V = () => ND.View;
+  const R = { mask: null, busy: false };
+  const S = () => App.state;
+  const ensureMask = () => {
+    const d = App.doc;
+    if (!R.mask || R.mask.width !== d.width || R.mask.height !== d.height) { const t = U.colorType; U.colorType = 'unorm8'; R.mask = U.canvas(d.width, d.height); U.colorType = t; }
+    return R.mask;
+  };
+  R.hasMask = () => !!(R.mask && ND.Sel.contentBBox(R.mask));
+  R.clear = () => { if (R.mask) U.ctx(R.mask).clearRect(0, 0, R.mask.width, R.mask.height); V().request(); App.emit('airemove'); };
+  const dab = (a, b) => {
+    const x = U.ctx(ensureMask());
+    x.strokeStyle = x.fillStyle = '#ff2a55'; x.lineCap = x.lineJoin = 'round'; x.lineWidth = S().airSize;
+    x.beginPath(); x.moveTo(a.x, a.y); x.lineTo(b.x, b.y); x.stroke();
+    x.beginPath(); x.arc(b.x, b.y, S().airSize / 2, 0, U.TAU); x.fill();
+  };
+  R.down = function (e, p) {
+    if (R.busy) return true;
+    if (S().airMode === 'select') { App.toast('Selection mode: select what to remove, then click Remove in the bar at the top'); return true; }
+    dab(p, p);
+    V().drag = { tool: 'x-airemove', last: p };
+    V().request();
+    return true;
+  };
+  R.move = function (e, p) { const dr = V().drag; dab(dr.last, p); dr.last = p; V().request(); };
+  R.up = function () { App.emit('airemove'); if (S().airAuto && R.hasMask()) R.run(false); };
+  R.overlay = function (cx, lw) {
+    if (S().tool !== 'airemove') return;
+    if (R.mask) { cx.save(); cx.globalAlpha = 0.45; cx.drawImage(R.mask, 0, 0); cx.restore(); }
+    const c = V().cursor;
+    if (c && c.inside && S().airMode !== 'select') { cx.save(); cx.strokeStyle = 'rgba(255,255,255,0.9)'; cx.lineWidth = lw; cx.beginPath(); cx.arc(c.x, c.y, S().airSize / 2, 0, U.TAU); cx.stroke(); cx.strokeStyle = 'rgba(0,0,0,0.6)'; cx.setLineDash([3 * lw, 3 * lw]); cx.stroke(); cx.restore(); }
+  };
+  async function model() {
+    const why = AI.unsupported();
+    if (why) { ND.Dialogs.modal('AI remove', U.h('p', why), [{ label: 'Close', primary: true }]); return null; }
+    const id = AI.INPAINT.includes(S().aiInpaint) ? S().aiInpaint : 'migan';
+    if (await AI.isDownloaded(id)) return id;
+    return ND.AIUI.choose('AI remove — choose a model', 'Download and remove', null, AI.INPAINT, 'aiInpaint');
+  }
+  // Remove what is painted (or, with fromSelection, what is selected)
+  R.run = async function (fromSelection) {
+    const d = App.doc;
+    if (R.busy) return;
+    const useSel = fromSelection || S().airMode === 'select';
+    const hole = useSel ? d.selectionMask : R.mask;
+    if (!hole || !ND.Sel.contentBBox(hole)) return App.toast(useSel ? 'Select what to remove first (any selection tool)' : 'Paint over what you want to remove');
+    if (!S().airAll && !(d.active && d.active.isPixel)) return App.toast('Pick a paint layer, or turn on “Sample all layers”');
+    const id = await model();
+    if (!id) return;
+    R.busy = true;
+    const UI = ND.AIUI;
+    UI.busy('Starting AI…');
+    try {
+      const src = S().airAll ? U.clone(d.getProjection()) : d.active.canvas;
+      const r = await AI.inpaint(id, src, hole, (t) => UI.busy(t));
+      if (S().airNewLayer || !d.canPaint()) {
+        d.addLayerFromCanvas('AI remove', r.patch, 0, 0);
+      } else {
+        const keep = d.selectionMask; d.selectionMask = null; // the patch already has the right shape
+        d.paintOnActive('AI Remove', (x) => x.drawImage(r.patch, 0, 0));
+        d.selectionMask = keep;
+      }
+      if (!useSel) R.clear();
+      App.toast('Removed with ' + AI.MODELS[id].name + ' in ' + r.seconds.toFixed(1) + ' s' + (S().airNewLayer ? ' — on its own layer, so you can erase parts of it or hide it' : ''), 4000);
+    } catch (e) { console.error(e); App.toast('AI remove failed: ' + e.message, 6000); } finally { R.busy = false; UI.idle(); V().request(); }
+  };
+  App.aiRemoveSelection = () => R.run(true);
+  App.on('docchange', () => { R.mask = null; });
+  App.on('tool', () => { if (S().tool !== 'airemove') V().request(); });
+  ND.AIRemove = R;
 })();
 
 </script>

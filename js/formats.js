@@ -1,5 +1,6 @@
 /* Neon Draw — more file formats: TIFF (open / save), PDF (save), Krita .kra (open / save), and the parts of
  * Photoshop files that keep text and adjustment layers editable. All written from the published layouts. */
+/* global Float16Array */
 'use strict';
 (function () {
   const U = ND.U, enc = new TextEncoder();
@@ -83,7 +84,7 @@
     const tw = tiled ? T[322][0] : W, th = tiled ? T[323][0] : (T[278] || [H])[0];
     const offs = tiled ? T[324] : T[273], cnts = tiled ? T[325] : T[279];
     const across = tiled ? Math.ceil(W / tw) : 1, planes = planar === 2 ? spp : 1;
-    const full = new Uint8Array(W * H * spp * (bps / 8 >= 1 ? bps / 8 : 1));
+    const full = new Uint8Array(W * H * spp), full16 = bps === 16 ? new Uint16Array(W * H * spp) : null;
     const chunkSpp = planar === 2 ? 1 : spp, rowBytes = Math.ceil((tw * chunkSpp * bps) / 8);
     const per = offs.length / planes;
     for (let ci = 0; ci < offs.length; ci++) {
@@ -107,7 +108,7 @@
           for (let c = 0; c < chunkSpp; c++) {
             const ch = planar === 2 ? plane : c, dst = ((y0 + r) * W + x0 + x) * spp + ch;
             if (bps === 8) full[dst] = data[r * rowBytes + x * chunkSpp + c];
-            else if (bps === 16) { const a = r * rowBytes + (x * chunkSpp + c) * 2; full[dst] = le ? data[a + 1] : data[a]; } // keep the high byte
+            else if (bps === 16) { const a = r * rowBytes + (x * chunkSpp + c) * 2, v16 = le ? data[a] | (data[a + 1] << 8) : (data[a] << 8) | data[a + 1]; full[dst] = v16 >> 8; full16[dst] = v16; }
             else full[dst] = (data[r * rowBytes + ((x * chunkSpp + c) >> 3)] >> (7 - ((x * chunkSpp + c) & 7))) & 1 ? 255 : 0;
           }
         }
@@ -126,6 +127,16 @@
       o[d] = r; o[d + 1] = g; o[d + 2] = b; o[d + 3] = a;
     }
     x.putImageData(img, 0, 0);
+    // 16-bit RGB / grey: keep every bit in a 16-bit canvas
+    if (full16 && (photo === 2 || photo <= 1) && ND.Deep && ND.Deep.supported()) {
+      const half = new Float16Array(W * H * 4);
+      for (let i = 0; i < W * H; i++) {
+        const s0 = i * spp;
+        if (photo === 2) { half[i * 4] = full16[s0] / 65535; half[i * 4 + 1] = full16[s0 + 1] / 65535; half[i * 4 + 2] = full16[s0 + 2] / 65535; half[i * 4 + 3] = spp > 3 ? full16[s0 + 3] / 65535 : 1; }
+        else { const v = (photo === 0 ? 65535 - full16[s0] : full16[s0]) / 65535; half[i * 4] = half[i * 4 + 1] = half[i * 4 + 2] = v; half[i * 4 + 3] = spp > 1 ? full16[s0 + 1] / 65535 : 1; }
+      }
+      return { canvas: ND.Deep.canvasFromHalf(half, W, H), icc: T.icc || null, cmyk: false, bits: 16 };
+    }
     return { canvas: c, icc: T.icc || null, cmyk: photo === 5, bits: bps };
   };
   /* Save a TIFF. opts: { cmyk: false, icc: Uint8Array|null, dpi: 72, alpha: true }.
@@ -133,22 +144,29 @@
   F.writeTIFF = async function (canvas, opts) {
     opts = opts || {};
     const W = canvas.width, H = canvas.height, d = rgbaOf(canvas), cmyk = !!opts.cmyk, spp = cmyk ? 4 : opts.alpha === false ? 3 : 4;
-    const raw = new Uint8Array(W * H * spp);
-    for (let i = 0, j = 0; i < W * H; i++, j += 4) {
+    const b16 = !!opts.bits16 && !cmyk && ND.Deep && ND.Deep.is16(canvas), bytesPer = b16 ? 2 : 1;
+    let raw = new Uint8Array(W * H * spp);
+    if (b16) {
+      // 16 bits per channel, big-endian samples are fine as long as the byte order mark says so: we write little-endian
+      const f16 = ND.Deep.read16(canvas).data, r16 = new Uint8Array(W * H * 4 * 2);
+      for (let i = 0; i < W * H * 4; i++) { const v = Math.round(Math.max(0, Math.min(1, f16[i])) * 65535); r16[i * 2] = v & 255; r16[i * 2 + 1] = v >> 8; }
+      raw = r16;
+    }
+    for (let i = 0, j = 0; i < W * H && !b16; i++, j += 4) {
       if (cmyk) { const k = ND.Colour.rgbToCmyk(d[j], d[j + 1], d[j + 2], d[j + 3]); raw.set(k, i * 4); }
       else { raw[i * spp] = d[j]; raw[i * spp + 1] = d[j + 1]; raw[i * spp + 2] = d[j + 2]; if (spp === 4) raw[i * spp + 3] = d[j + 3]; }
     }
     // horizontal prediction makes Deflate much smaller for photos
-    const row = W * spp;
-    for (let y = 0; y < H; y++) for (let x = row - 1; x >= spp; x--) raw[y * row + x] = (raw[y * row + x] - raw[y * row + x - spp]) & 255;
+    const row = W * spp * bytesPer;
+    if (!b16) for (let y = 0; y < H; y++) for (let x = row - 1; x >= spp; x--) raw[y * row + x] = (raw[y * row + x] - raw[y * row + x - spp]) & 255;
     const rps = Math.max(1, Math.floor(262144 / row)), strips = [];
     for (let y = 0; y < H; y += rps) strips.push(await F.deflate(raw.subarray(y * row, Math.min(H, y + rps) * row)));
     const tags = [];
     const add = (tag, type, vals) => tags.push({ tag, type, vals: Array.isArray(vals) || vals instanceof Uint8Array ? vals : [vals] });
     const dpi = opts.dpi || 72;
-    add(256, 4, W); add(257, 4, H); add(258, 3, new Array(spp).fill(8)); add(259, 3, 8); add(262, 3, cmyk ? 5 : 2);
+    add(256, 4, W); add(257, 4, H); add(258, 3, new Array(spp).fill(b16 ? 16 : 8)); add(259, 3, 8); add(262, 3, cmyk ? 5 : 2);
     add(273, 4, strips.map(() => 0)); add(277, 3, spp); add(278, 4, rps); add(279, 4, strips.map((s) => s.length));
-    add(282, 5, [dpi]); add(283, 5, [dpi]); add(284, 3, 1); add(296, 3, 2); add(305, 2, enc.encode('Neon Draw\0')); add(317, 3, 2);
+    add(282, 5, [dpi]); add(283, 5, [dpi]); add(284, 3, 1); add(296, 3, 2); add(305, 2, enc.encode('Neon Draw\0')); add(317, 3, b16 ? 1 : 2);
     if (spp === 4 && !cmyk) add(338, 3, 2);
     if (opts.icc) add(34675, 7, opts.icc);
     tags.sort((a, b) => a.tag - b.tag);

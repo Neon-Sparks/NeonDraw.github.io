@@ -24,7 +24,7 @@
   function project(doc, enc) {
     const smartOut = (sm) => (sm ? { png: enc(sm.src), m: sm.m, mesh: sm.mesh, g: sm.g || 0, contents: sm.contents ? project(sm.contents, enc) : null } : null);
     return {
-      app: 'pigment', version: 3, width: doc.width, height: doc.height, name: doc.name, backgroundColor: doc.backgroundColor,
+      app: 'pigment', version: 3, depth: doc.depth || 8, width: doc.width, height: doc.height, name: doc.name, backgroundColor: doc.backgroundColor,
       guides: doc.guides, assistants: doc.assistants, paper: doc.paper || null, paths: doc.paths || [], activePath: doc.activePath || null, anim: doc.anim || null,
       layers: flatList(doc).map(({ node: n, depth }) => ({
         type: n.type, name: n.name, visible: n.visible, opacity: n.opacity, blendMode: n.blendMode, isGroup: n.isGroup, depth,
@@ -38,12 +38,12 @@
       })),
     };
   }
-  function serialize(doc) { return JSON.stringify(project(doc, (c) => c.toDataURL('image/png'))); }
+  function serialize(doc) { return JSON.stringify(project(doc, (c) => (ND.Deep && ND.Deep.is16(c) ? ND.Deep.encodeSync(c) : c.toDataURL('image/png')))); }
   const blobToDataURL = (b) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(b); });
   // Same file format, but PNG encoding runs asynchronously so big documents don't freeze the page.
   async function serializeAsync(doc) {
     const list = [], obj = project(doc, (c) => { list.push(c); return '#' + (list.length - 1); });
-    const urls = await Promise.all(list.map(async (c) => blobToDataURL(await U.canvasToBlob(c, 'image/png'))));
+    const urls = await Promise.all(list.map(async (c) => blobToDataURL(await (ND.Deep ? ND.Deep.blobFor(c) : U.canvasToBlob(c, 'image/png')))));
     const fix = (v) => (typeof v === 'string' && v[0] === '#' ? urls[+v.slice(1)] : v);
     const fixAll = (o) => o.layers.forEach((l) => { l.png = fix(l.png); l.mask = fix(l.mask); if (l.frames) l.frames.forEach((f) => { f.png = fix(f.png); }); if (l.smart) { l.smart.png = fix(l.smart.png); if (l.smart.contents) fixAll(l.smart.contents); } });
     fixAll(obj);
@@ -52,11 +52,20 @@
   async function deserialize(text, blobs) {
     const s = typeof text === 'string' ? JSON.parse(text) : text;
     const load = async (ref) => {
+      // 16-bit pixels are stored losslessly in their own format
+      if (ND.Deep) {
+        const b = blobs && typeof ref === 'string' && ref[0] === '#' ? blobs[+ref.slice(1)] : null;
+        if (b && b.type === 'application/x-nd16') return ND.Deep.loadRef(b);
+        if (ND.Deep.isRef(ref)) return ND.Deep.loadRef(ref);
+      }
       if (blobs && typeof ref === 'string' && ref[0] === '#') return U.blobToImage(blobs[+ref.slice(1)]);
       return U.loadImage(ref);
     };
     if (s.app !== 'pigment') throw new Error('Not a Neon Draw project');
+    const prevType = U.colorType;
+    if (ND.Deep) ND.Deep.use(s.depth === 16 ? 16 : 8);
     const doc = new ND.Doc(s.width, s.height, null);
+    doc.depth = s.depth === 16 && ND.Deep && ND.Deep.supported() ? 16 : 8;
     doc.name = s.name || 'Untitled';
     doc.backgroundColor = s.backgroundColor || null;
     doc.guides = Array.isArray(s.guides) ? s.guides : [];
@@ -100,6 +109,7 @@
     doc.active = doc.firstLayer();
     if (ND.Anim && s.anim) { doc.anim = ND.Anim.normalise(s.anim); ND.Anim.apply(doc); }
     doc.invalidateAll();
+    U.colorType = prevType;
     return doc;
   }
   // Pixels for interchange formats: masks and layer effects are baked in.
@@ -118,7 +128,7 @@
   // Autosave stores layer PNGs as Blobs (encoded off the main thread) instead of one giant JSON string.
   async function autosaveRecord(doc) {
     const list = [], meta = project(doc, (c) => { list.push(c); return '#' + (list.length - 1); });
-    const blobs = await Promise.all(list.map((c) => U.canvasToBlob(c, 'image/png')));
+    const blobs = await Promise.all(list.map((c) => (ND.Deep ? ND.Deep.blobFor(c) : U.canvasToBlob(c, 'image/png'))));
     return { format: 'ndraw-parts', meta, blobs };
   }
   async function autosave(doc) {

@@ -71,7 +71,7 @@
       usage.textContent = est ? 'This site is using ' + MB(est.usage || 0) + ' of browser storage (about ' + Math.round((est.quota || 0) / 1e9) + ' GB available).' : '';
     };
     const cards = AI.ORDER.map((id) => card(id, { manage: true, onChange: showUsage }));
-    const upCards = AI.UPSCALERS.map((id) => card(id, { manage: true, onChange: showUsage }));
+    const upCards = AI.UPSCALERS.map((id) => card(id, { manage: true, onChange: showUsage })), inCards = AI.INPAINT.map((id) => card(id, { manage: true, onChange: showUsage }));
     const body = h('div.nd-ai',
       h('p', 'AI models find the subject of a photo for Remove background, AI masks and AI selections, and enlarge pictures (Image ▸ Enlarge with AI). Download the ones you want once; they are stored in this browser and then work offline. Images are processed on your own computer and are never uploaded.'),
       why ? unsupportedBox(why) : null,
@@ -79,9 +79,11 @@
       ...cards,
       h('h4.nd-ai-sec', 'Upscalers (enlarge pictures)'),
       ...upCards,
+      h('h4.nd-ai-sec', 'Object removal (AI remove tool)'),
+      ...inCards,
       h('div.nd-hint', 'Speed: with a graphics card that supports WebGPU (Chrome, Edge) a picture takes about a second; on the CPU expect 2–3 s for MODNet and 10–40 s for ISNet / RMBG. ISNet always uses the CPU for now. If a model ever fails on the graphics card, Neon Draw switches it to the CPU automatically.'),
       usage);
-    if (why) cards.concat(upCards).forEach((c) => c.querySelectorAll('button').forEach((b) => { b.disabled = true; }));
+    if (why) cards.concat(upCards, inCards).forEach((c) => c.querySelectorAll('button').forEach((b) => { b.disabled = true; }));
     showUsage();
     D().modal('AI models', body, [{ label: 'Close', primary: true }], { wide: true, noFocus: true });
   };

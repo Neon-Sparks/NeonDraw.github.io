@@ -744,10 +744,13 @@
   let spaceDown = false, penSeen = false;
   V.isSpaceDown = () => spaceDown;
   function local(e) { const r = cv.getBoundingClientRect(); return { sx: e.clientX - r.left, sy: e.clientY - r.top }; }
+  // pen pressure, with the sensitivity setting (50% = as the pen reports it; higher = lighter touch needed)
   function pressureOf(e) {
-    if (e.pointerType === 'pen') return e.pressure > 0 ? e.pressure : 0.05;
-    return 1;
+    if (e.pointerType !== 'pen' || App.state.pressureOn === false) return 1;
+    const raw = e.pressure > 0 ? e.pressure : 0.05, s = App.state.pressureSens == null ? 50 : App.state.pressureSens;
+    return Math.max(0.02, Math.min(1, Math.pow(raw, Math.pow(2, (50 - s) / 25))));
   }
+  V.pressureOf = pressureOf;
   function pt(e) { const l = local(e), p = toDoc(l.sx, l.sy); return { x: p.x, y: p.y, p: pressureOf(e), tx: e.tiltX || 0, ty: e.tiltY || 0, t: e.timeStamp }; }
 
   function bindInput() {

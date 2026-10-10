@@ -184,6 +184,7 @@
       cx.save(); cx.strokeStyle = 'rgba(255,255,255,0.7)'; cx.setLineDash([10 * lw, 6 * lw]); cx.lineWidth = 2 * lw; cx.strokeRect(0, 0, d.width, d.height); cx.restore();
     }
     if (ND.Pen) ND.Pen.overlay(cx, lw, zr);
+    if (ND.AIRemove) ND.AIRemove.overlay(cx, lw);
     const VV = V();
     // smoothing "string": from the line's end to the pen
     if (VV.stroke && VV.stroke.rope && VV.stroke.smooth && VV.stroke.lastRaw && VV.stroke.s.stabilizer >= 0.15) {
@@ -269,6 +270,7 @@
     }
     // move an existing guide with the move tool
     if (tool === 'pen' && ND.Pen) return ND.Pen.down(e, p);
+    if (tool === 'airemove' && ND.AIRemove) return ND.AIRemove.down(e, p);
     if (tool === 'move' && d.guides.length) {
       for (let i = 0; i < d.guides.length; i++) {
         const g = d.guides[i], s = V().toScreen(g.axis === 'x' ? g.pos : p.x, g.axis === 'y' ? g.pos : p.y);
@@ -347,6 +349,7 @@
     const dr = V().drag, d = App.doc;
     if (!dr || !dr.tool.startsWith('x-')) return false;
     if (dr.tool === 'x-pen') ND.Pen.move(e, p);
+    else if (dr.tool === 'x-airemove') ND.AIRemove.move(e, p);
     else if (dr.tool === 'x-guide') { dr.pos = dr.axis === 'x' ? Math.round(p.x) : Math.round(p.y); dr.out = dr.axis === 'x' ? l.sx < RULER : l.sy < RULER; V().request(); }
     else if (dr.tool === 'x-assist') { const q = e.shiftKey ? p : T.snap(p); dr.h.x = q.x; dr.h.y = q.y; V().request(); }
     else if (dr.tool === 'x-patch') { dr.cur = p; V().request(); }
@@ -368,6 +371,7 @@
   T.up = function (e, dr) {
     const d = App.doc;
     if (dr.tool === 'x-pen') { ND.Pen.up(dr); return; }
+    if (dr.tool === 'x-airemove') { ND.AIRemove.up(dr); return; }
     if (dr.tool === 'x-guide') {
       const g = d.guides.slice();
       if (dr.index >= 0) g.splice(dr.index, 1);
