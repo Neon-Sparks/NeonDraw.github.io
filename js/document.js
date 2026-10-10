@@ -35,6 +35,10 @@
       this.type = 'layer';
       this.canvas = U.canvas(w, h);
       this.textData = null; // editable text layers remember their text
+      this.shapeData = null; // vector shape layers remember their paths and style
+      this.colorizeData = null; // colourise (lazy brush) set membership
+      this.frames = null; // animation keyframes { frame: canvas }
+      this.smart = null; // smart object: { src, m, mesh, g, contents }
     }
   }
   class Group extends Node {
@@ -155,6 +159,8 @@
       this.quickMask = null; // greyscale canvas while quick-mask mode is on
       this.editMask = false; // paint on the active node's mask
       this.guides = []; // {axis:'x'|'y', pos}
+      this.paths = []; // Bézier paths (pen tool)
+      this.activePath = null;
       this.assistants = []; // perspective / ruler helpers
       this.projection = U.canvas(w, h);
       this.strokeBuffer = U.canvas(w, h);
@@ -300,7 +306,11 @@
       let c;
       if (n.isGroup) { c = new Group(keepName ? n.name : n.name + ' copy'); c.collapsed = n.collapsed; c.children = n.children.map((q) => this.cloneNode(q, true)); }
       else if (n.isAdjust) { c = new Adjust(n.kind, JSON.parse(JSON.stringify(n.params))); c.name = keepName ? n.name : n.name + ' copy'; }
-      else { c = new Layer(keepName ? n.name : n.name + ' copy', this.width, this.height); U.ctx(c.canvas).drawImage(n.canvas, 0, 0); c.textData = n.textData ? JSON.parse(JSON.stringify(n.textData)) : null; }
+      else { c = new Layer(keepName ? n.name : n.name + ' copy', this.width, this.height); U.ctx(c.canvas).drawImage(n.canvas, 0, 0); c.textData = n.textData ? JSON.parse(JSON.stringify(n.textData)) : null; c.shapeData = n.shapeData ? JSON.parse(JSON.stringify(n.shapeData)) : null;
+        if (n.frames) { c.frames = {}; for (const k in n.frames) { c.frames[k] = U.clone(n.frames[k]); if (n.frames[k] === n.canvas) c.canvas = c.frames[k]; } }
+        if (n.smart) c.smart = Object.assign({}, n.smart, ND.SmartObj.state(n.smart));
+        if (n.tween) c.tween = JSON.parse(JSON.stringify(n.tween));
+        if (n.onion) c.onion = Object.assign({}, n.onion); }
       Object.assign(c, { visible: n.visible, opacity: n.opacity, blendMode: n.blendMode, alphaLock: n.alphaLock, clip: n.clip, maskEnabled: n.maskEnabled });
       c.mask = n.mask ? U.clone(n.mask) : null;
       c.effects = n.effects ? JSON.parse(JSON.stringify(n.effects)) : null;
@@ -548,15 +558,19 @@
         ctx.drawImage(src, sx, sy, r.w, r.h, 0, 0, r.w, r.h);
         ctx.restore();
       } else {
-        const d = ctx.getImageData(0, 0, r.w, r.h), s = U.ctx(src).getImageData(sx, sy, r.w, r.h);
-        B.blendImageData(d, s, mode, opacity, false);
-        ctx.putImageData(d, 0, 0);
+        // special blend modes: on the graphics card when possible, otherwise pixel by pixel
+        ND.GPU.blendAny(ctx, 0, 0, src, sx, sy, r.w, r.h, mode, opacity);
       }
     }
     // Pixel layer content inside rect (with any live stroke), rect-sized canvas.
     layerPixels(L, r) {
       const c = this.tmp(this._level++, r.w, r.h), x = U.ctx(c);
-      x.drawImage(L.canvas, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
+      if (L.tw) {
+        // animation motion (tweening): moved / scaled / rotated / faded on top of the layer's own pixels
+        x.save(); x.imageSmoothingEnabled = true; x.imageSmoothingQuality = 'high';
+        x.translate(-r.x, -r.y); x.transform(L.tw.m.a, L.tw.m.b, L.tw.m.c, L.tw.m.d, L.tw.m.e, L.tw.m.f); x.globalAlpha = L.tw.o;
+        x.drawImage(L.canvas, 0, 0); x.restore();
+      } else x.drawImage(L.canvas, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
       if (this.stroke && L === this.active && this.stroke.kind === 'pixels') this.applyStrokeTo(x, r);
       return c;
     }
@@ -584,7 +598,7 @@
     applyAdjust(ctx, n, r) {
       const img = ctx.getImageData(0, 0, r.w, r.h);
       const orig = new Uint8ClampedArray(img.data);
-      ND.Adjust.apply(n.kind, img, n.params, { x: r.x, y: r.y, docW: this.width, docH: this.height });
+      ND.Adjust.apply(n.kind, img, n.params, { x: r.x, y: r.y, docW: this.width, docH: this.height, fg: ND.App ? ND.App.state.fg : '#000000', bg: ND.App ? ND.App.state.bg : '#ffffff' });
       const m = this.maskRect(n, r);
       const md = m ? U.ctx(m).getImageData(0, 0, r.w, r.h).data : null;
       const d = img.data, op = n.opacity;
@@ -669,16 +683,18 @@
     recordSurface(S, beforeImg, rect, label, prevText) {
       const c = S.canvas, afterImg = U.ctx(c).getImageData(rect.x, rect.y, rect.w, rect.h);
       const touch = () => {
-        if (S.kind === 'pixels') { S.node.rev++; if (label !== 'Text') S.node.textData = null; }
+        // painting pixels on a text or vector shape layer turns it into an ordinary paint layer
+        if (S.kind === 'pixels') { S.node.rev++; if (label !== 'Text') S.node.textData = null; if (label !== 'Shape') S.node.shapeData = null; if (label !== 'Smart') S.node.smart = null; }
         else { markMask(c, rect); if (S.node) S.node.rev++; this.quickRev = (this.quickRev || 0) + 1; }
       };
       const textBefore = S.kind === 'pixels' ? (prevText !== undefined ? prevText : S.node.textData) : null;
+      const shapeBefore = S.kind === 'pixels' ? S.node.shapeData : null, smartBefore = S.kind === 'pixels' ? S.node.smart : null;
       touch();
-      const textAfter = S.kind === 'pixels' ? S.node.textData : null;
+      const textAfter = S.kind === 'pixels' ? S.node.textData : null, shapeAfter = S.kind === 'pixels' ? S.node.shapeData : null, smartAfter = S.kind === 'pixels' ? S.node.smart : null;
       this.history.push({
         label, bytes: rect.w * rect.h * 8,
-        undo: () => { U.ctx(c).putImageData(beforeImg, rect.x, rect.y); touch(); if (S.kind === 'pixels') S.node.textData = textBefore; },
-        redo: () => { U.ctx(c).putImageData(afterImg, rect.x, rect.y); touch(); if (S.kind === 'pixels') S.node.textData = textAfter; },
+        undo: () => { U.ctx(c).putImageData(beforeImg, rect.x, rect.y); touch(); if (S.kind === 'pixels') { S.node.textData = textBefore; S.node.shapeData = shapeBefore; S.node.smart = smartBefore; } },
+        redo: () => { U.ctx(c).putImageData(afterImg, rect.x, rect.y); touch(); if (S.kind === 'pixels') { S.node.textData = textAfter; S.node.shapeData = shapeAfter; S.node.smart = smartAfter; } },
       });
     }
     recordRegion(layer, beforeImg, rect, label) { this.recordSurface({ canvas: layer.canvas, node: layer, kind: 'pixels' }, beforeImg, rect, label); }
@@ -686,6 +702,7 @@
      * draw(ctx) paints in document coordinates. opts: {rect, mode: 'normal'|'erase'|blendId, opacity} */
     paintOnActive(label, draw, opts) {
       opts = opts || {};
+      if (ND.Anim && this.anim) ND.Anim.autoKey(this);
       const S = this.surface();
       if (!S) return false;
       const rect = U.clipRect(opts.rect || { x: 0, y: 0, w: this.width, h: this.height }, this.width, this.height);
@@ -711,9 +728,7 @@
         lx.drawImage(scratch, rect.x, rect.y, rect.w, rect.h, rect.x, rect.y, rect.w, rect.h);
         lx.restore();
       } else {
-        const d = lx.getImageData(rect.x, rect.y, rect.w, rect.h);
-        B.blendImageData(d, U.ctx(scratch).getImageData(rect.x, rect.y, rect.w, rect.h), mode, opacity, false);
-        lx.putImageData(d, rect.x, rect.y);
+        ND.GPU.blendAny(lx, rect.x, rect.y, scratch, rect.x, rect.y, rect.w, rect.h, mode, opacity);
       }
       if (S.kind === 'pixels' && S.node.alphaLock) this.restoreAlpha(S.canvas, before, rect);
       if (S.kind !== 'pixels') greyify(S.canvas, rect);
@@ -858,16 +873,31 @@
       w = Math.max(1, Math.round(w)); h = Math.max(1, Math.round(h));
       const W = this.width, H = this.height, nodes = this.allNodes();
       const layers = nodes.filter((n) => n.isPixel), masked = nodes.filter((n) => n.mask);
-      const before = { c: layers.map((l) => l.canvas), m: masked.map((n) => n.mask), g: this.guides.slice() };
+      const mk = (src, l) => { const c = U.canvas(w, h), x = U.ctx(c); x.imageSmoothingQuality = 'high'; drawFn(x, src, l); return c; };
+      // animation keyframes are transformed too
+      const framesAfter = layers.map((l) => { if (!l.frames) return null; const o = {}; for (const k in l.frames) o[k] = mk(l.frames[k], l); return o; });
+      const before = { c: layers.map((l) => l.canvas), m: masked.map((n) => n.mask), g: this.guides.slice(), f: layers.map((l) => (l.frames ? Object.assign({}, l.frames) : null)), s: layers.map((l) => (l.smart ? ND.SmartObj.state(l.smart) : null)) };
+      // smart objects: the operation becomes part of their placement and they are redrawn from the original
+      const smartAfter = layers.map((l) => {
+        if (!l.smart) return null;
+        const T = ND.SmartObj.captureAffine(drawFn, l, W, H);
+        return T ? ND.SmartObj.transformed(ND.SmartObj.state(l.smart), T) : null;
+      });
       const after = {
-        c: layers.map((l) => { const c = U.canvas(w, h), x = U.ctx(c); x.imageSmoothingQuality = 'high'; drawFn(x, l.canvas, l); return c; }),
+        f: framesAfter,
+        s: smartAfter,
+        c: layers.map((l, i) => {
+          if (smartAfter[i]) { const tmp = { canvas: U.canvas(w, h), smart: Object.assign({}, l.smart, smartAfter[i]), rev: 0 }; ND.SmartObj.render(tmp); return tmp.canvas; }
+          if (l.frames) for (const k in l.frames) if (l.frames[k] === l.canvas) return framesAfter[i][k];
+          return mk(l.canvas, l);
+        }),
         m: masked.map((n) => { const c = U.canvas(w, h), x = U.ctx(c); x.fillStyle = '#fff'; x.fillRect(0, 0, w, h); x.imageSmoothingQuality = 'high'; drawFn(x, n.mask, null); return c; }),
         g: [],
       };
       const selBefore = this.selectionMask;
       const apply = (ww, hh, s) => {
         this.width = ww; this.height = hh;
-        layers.forEach((l, i) => { l.canvas = s.c[i]; l.rev++; });
+        layers.forEach((l, i) => { l.canvas = s.c[i]; l.rev++; if (s.f[i]) { l.frames = Object.assign({}, s.f[i]); l._blank = null; } if (s.s && s.s[i] && l.smart) ND.SmartObj.setState(l.smart, s.s[i]); });
         masked.forEach((n, i) => { n.mask = s.m[i]; n.rev++; });
         this.guides = s.g.slice();
         this.projection = U.canvas(ww, hh);

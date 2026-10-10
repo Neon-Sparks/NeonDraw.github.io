@@ -17,6 +17,7 @@
   <script src="../js/util.js"></script>
   <script src="../js/icons.js"></script>
   <script src="../js/blend.js"></script>
+  <script src="../js/gpu.js"></script>
   <script src="../js/document.js"></script>
   <script src="../js/effects.js"></script>
   <script src="../js/adjust.js"></script>
@@ -25,6 +26,13 @@
   <script src="../js/textures.js"></script>
   <script src="../js/paper.js"></script>
   <script src="../js/harmony.js"></script>
+  <script src="../js/pigment.js"></script>
+  <script src="../js/paths.js"></script>
+  <script src="../js/colourise.js"></script>
+  <script src="../js/anim.js"></script>
+  <script src="../js/smart.js"></script>
+  <script src="../js/formats.js"></script>
+  <script src="../js/colour.js"></script>
   <script src="../js/tips.js"></script>
   <script src="../js/patterns.js"></script>
   <script src="../js/patterns2.js"></script>
@@ -466,6 +474,314 @@
       assert(px(m, 90, 40)[3] > 200 && px(m, 30, 40)[3] < 10, 'only the stroked object is selected');
       const both = ND.AI.regionMask(R, new Set([0, 1]), 120, 80);
       assert(px(both, 51, 40)[3] > 20, 'soft edge pixels belong to their object');
+    });
+    await test('pigment mixing: blue + yellow makes green, not grey', () => {
+      const m = ND.Pigment.mix([30, 60, 200], [245, 215, 25], 0.5);
+      assert(m[1] > m[0] && m[1] > m[2], 'green dominates: ' + m.map(Math.round));
+      const rgb = [(30 + 245) / 2, (60 + 215) / 2, (200 + 25) / 2];
+      assert(Math.abs(rgb[1] - rgb[0]) < 60 && m[1] - Math.max(m[0], m[2]) > 25, 'clearly greener than an RGB average');
+      const w = ND.Pigment.mix([255, 255, 255], [200, 30, 40], 0.5);
+      assert(w[0] > w[1] + 60, 'white + red stays a tint of red: ' + w.map(Math.round));
+      assert(ND.Pigment.ramp('#ff0000', '#0000ff', 5).length === 5, 'ramp');
+    });
+    await test('mixer brush picks up paint as pigment', () => {
+      const run = (mode) => {
+        const d = new ND.Doc(300, 80, null), x = U.ctx(d.active.canvas); x.fillStyle = '#f5d719'; x.fillRect(0, 0, 300, 80);
+        const st = new ND.Brush.Stroke(d, { engine: 'mixer', size: 40, flow: 1, bleed: 0.8, load: 400, mixMode: mode, stabilizer: 0, pressureSize: false }, { colour: '#1e3cc8' });
+        st.begin({ x: 20, y: 40, p: 1 }); for (let i = 1; i <= 60; i++) st.move({ x: 20 + i * 4, y: 40, p: 1 }); st.end('m');
+        return px(d.active.canvas, 200, 40);
+      };
+      const pg = run('pigment'), lg = run('rgb');
+      assert(pg[1] > pg[2] && pg[1] > pg[0] * 0.9, 'pigment mix is greenish: ' + pg.slice(0, 3));
+      const green = (c) => c[1] - Math.max(c[0], c[2]);
+      assert(green(pg) > 20 && green(pg) > green(lg) + 30, 'pigment ' + pg.slice(0, 3) + ' is green, RGB ' + lg.slice(0, 3) + ' is not');
+    });
+    await test('watercolour stays wet: a second stroke blends wet-in-wet', () => {
+      const d = new ND.Doc(300, 200, '#fff'), p = ND.Presets.LIST.find((q) => q.name === 'Watercolour Round');
+      const stroke = (y, col) => { const st = new ND.Brush.Stroke(d, Object.assign({}, p.settings, { stabilizer: 0 }), { colour: col }); st.begin({ x: 40, y, p: 0.8 }); for (let i = 1; i <= 50; i++) st.move({ x: 40 + i * 4, y, p: 0.8 }); st.end('w'); return st; };
+      const a = stroke(90, '#2a6fb5');
+      assert(d.wetArea && d.wetArea.until > performance.now(), 'the wash is wet');
+      const b = stroke(110, '#c0392b');
+      assert(!a.wetIn && b.wetIn, 'second stroke painted into the wet wash');
+      d.wetArea.until = 0;
+      const c = stroke(110, '#c0392b');
+      assert(!c.wetIn, 'dry wash: no wet-in-wet');
+    });
+    await test('filter layers are editable, maskable and clip as smart filters', async () => {
+      const d = new ND.Doc(120, 80, '#ffffff'), L = d.addLayer('ink'), x = U.ctx(L.canvas);
+      x.fillStyle = '#000'; x.fillRect(60, 0, 60, 80);
+      const A = d.addAdjustment('filter', { fid: 'blur', fp: { r: 8 } });
+      d.invalidateAll();
+      const edge = px(d.getProjection(), 58, 40);
+      assert(edge[0] < 250 && edge[0] > 5, 'blurred across the edge: ' + edge[0]);
+      assert(px(L.canvas, 58, 40)[3] === 0, 'layer pixels untouched');
+      d.setProps(A, { params: { fid: 'invert', fp: {} } }); d.invalidateAll();
+      assert(px(d.getProjection(), 10, 40)[0] < 10, 'changed to Invert');
+      const d2 = await ND.Store.deserialize(ND.Store.serialize(d));
+      const A2 = d2.allNodes().find((n) => n.isAdjust);
+      assert(A2 && A2.kind === 'filter' && A2.params.fid === 'invert', 'saved in projects');
+      // clipped: only the layer below is filtered, the white background stays white
+      d.setProps(A, { clip: true, params: { fid: 'invert', fp: {} } }); d.invalidateAll();
+      assert(px(d.getProjection(), 10, 40)[0] > 245 && px(d.getProjection(), 100, 40)[0] > 245, 'clipped filter only inverts the black layer');
+    });
+    await test('paths: Bézier geometry, splitting keeps the shape, sampling is even', () => {
+      const P = ND.Paths, path = P.create('t');
+      path.nodes.push({ x: 10, y: 50, ix: 10, iy: 50, ox: 40, oy: 0, smooth: true }, { x: 90, y: 50, ix: 60, iy: 0, ox: 90, oy: 50, smooth: true });
+      const before = P.point(P.segments(path)[0], 0.3);
+      const i = P.split(path, 0, 0.5);
+      assert(i === 1 && path.nodes.length === 3, 'point inserted');
+      const after = P.point(P.segments(path)[0], 0.6); // t=0.3 of the original = t=0.6 of the first half
+      assert(Math.hypot(before.x - after.x, before.y - after.y) < 0.01, 'shape unchanged');
+      const pts = P.sample(path, 2);
+      let maxGap = 0; for (let k = 1; k < pts.length; k++) maxGap = Math.max(maxGap, Math.hypot(pts[k].x - pts[k - 1].x, pts[k].y - pts[k - 1].y));
+      assert(maxGap < 2.2 && pts.length > 40, 'even spacing (' + pts.length + ' points)');
+      const hit = P.nearest(path, 50, 13);
+      assert(hit.dist < 3, 'nearest point on the curve');
+    });
+    await test('vector shape layers: render, save, and turn into pixels when painted on', async () => {
+      const d = new ND.Doc(100, 100, '#fff'), L = d.addLayer('Shape');
+      L.shapeData = { paths: [ND.Paths.ellipse(50, 50, 30, 20)], fill: '#ff0000', stroke: '#000000', width: 4 };
+      ND.Paths.renderShape(L.canvas, L.shapeData);
+      assert(near(px(L.canvas, 50, 50), [255, 0, 0, 255]) && px(L.canvas, 50, 10)[3] === 0, 'filled ellipse');
+      assert(px(L.canvas, 80, 50)[3] > 200 && px(L.canvas, 80, 50)[0] < 60, 'stroked outline');
+      const d2 = await ND.Store.deserialize(ND.Store.serialize(d));
+      const L2 = d2.allLayers().find((l) => l.shapeData);
+      assert(L2 && L2.shapeData.paths[0].nodes.length === 4 && L2.shapeData.fill === '#ff0000', 'saved in projects');
+      d.paintOnActive('fill', (x) => { x.fillStyle = '#00f'; x.fillRect(0, 0, 10, 10); });
+      assert(L.shapeData === null, 'painting pixels makes it a paint layer');
+      d.history.undo();
+      assert(L.shapeData && L.shapeData.fill === '#ff0000', 'undo brings the vector shape back');
+      d.paths = [ND.Paths.rect(10, 10, 30, 30)];
+      const d3 = await ND.Store.deserialize(ND.Store.serialize(d));
+      assert(d3.paths.length === 1 && d3.paths[0].closed, 'document paths saved');
+    });
+    await test('text: paragraph boxes wrap, justify fills the width, text follows a path', () => {
+      const c = U.canvas(400, 400), x = U.ctx(c);
+      const base = { font: 'sans-serif', size: 20, bold: false, italic: false, align: 'left', lineHeight: 1.2, spacing: 0, warp: 'none', amount: 0, outline: 0, shadow: false };
+      x.font = '20px sans-serif';
+      const rows = ND.Render.wrapText(x, 'The quick brown fox jumps over the lazy dog again and again', 150);
+      assert(rows.length >= 3 && rows.every((r) => x.measureText(r.s).width <= 150.5), 'wrapped to ' + rows.length + ' lines within the box');
+      const long = ND.Render.wrapText(x, 'Supercalifragilisticexpialidocious', 60);
+      assert(long.length > 1, 'very long words are broken');
+      const t = Object.assign({}, base, { text: 'aaa bbb ccc ddd eee fff ggg hhh', boxWidth: 200, align: 'justify' });
+      const bb = ND.Render.drawText(x, t, 10, 10, '#000');
+      assert(bb.tw === 200 && bb.th > 40, 'box is the set width');
+      // justified first line reaches the right edge of the box
+      let right = 0; const id = x.getImageData(0, 10, 400, 20).data;
+      for (let i = 0; i < 400 * 20; i++) if (id[i * 4 + 3] > 100) right = Math.max(right, i % 400);
+      assert(right > 195, 'justified line reaches the edge (' + right + ')');
+      // text on a path
+      const c2 = U.canvas(400, 200), x2 = U.ctx(c2), path = ND.Paths.create('arc');
+      path.nodes.push({ x: 20, y: 150, ix: 20, iy: 150, ox: 120, oy: 0, smooth: true }, { x: 380, y: 150, ix: 280, iy: 0, ox: 380, oy: 150, smooth: true });
+      const tp = Object.assign({}, base, { text: 'HELLO ALONG THE CURVE', onPath: path, px: 0, py: 0, pathOffset: 0 });
+      ND.Render.drawText(x2, tp, 0, 0, '#000');
+      const ink = (x0, y0, w, h) => { const d = x2.getImageData(x0, y0, w, h).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 100) n++; return n; };
+      assert(ink(15, 100, 60, 50) > 20, 'letters at the start of the curve');
+      assert(ink(150, 30, 100, 40) > 20, 'letters up at the top of the arc');
+      assert(ink(0, 0, 400, 20) < 5 && ink(150, 120, 100, 80) < 5, 'nothing off the path');
+      // moving the text moves it along with the path
+      x2.clearRect(0, 0, 400, 200); ND.Render.drawText(x2, tp, 0, 30, '#000');
+      assert(ink(150, 60, 100, 40) > 20 && ink(150, 30, 100, 25) < ink(150, 60, 100, 40), 'moved down with the path');
+    });
+    await test('colourise: hints fill their areas up to the lines, gaps close, white = empty', () => {
+      const W = 200, H = 120, line = U.canvas(W, H), lx = U.ctx(line);
+      lx.strokeStyle = '#000'; lx.lineWidth = 3;
+      lx.strokeRect(10, 10, 80, 100); // closed box on the left
+      lx.beginPath(); lx.moveTo(110, 10); lx.lineTo(190, 10); lx.lineTo(190, 110); lx.lineTo(110, 110); lx.lineTo(110, 64); lx.moveTo(110, 58); lx.lineTo(110, 10); lx.stroke(); // box on the right with a 6px gap
+      const hints = U.canvas(W, H), hx = U.ctx(hints);
+      hx.fillStyle = '#ff0000'; hx.fillRect(40, 50, 10, 6);
+      hx.fillStyle = '#0000ff'; hx.fillRect(140, 50, 10, 6);
+      hx.fillStyle = '#ffffff'; hx.fillRect(100, 2, 6, 4); // outside: leave empty
+      const r = ND.Colourise.run(line, hints, { gap: 4, blankWhite: true });
+      assert(r && r.colours.length === 3, 'three hint colours');
+      assert(near(px(r.canvas, 20, 100), [255, 0, 0, 255]), 'left box is red right into its corner');
+      assert(near(px(r.canvas, 180, 100), [0, 0, 255, 255]), 'right box is blue');
+      assert(px(r.canvas, 11, 60)[0] === 255 && px(r.canvas, 11, 60)[3] === 255, 'flats run under the line (no halo)');
+      // one scribble only: the other areas and the outside stay empty
+      const one = U.canvas(W, H); U.ctx(one).fillStyle = '#00aa00'; U.ctx(one).fillRect(40, 50, 10, 6);
+      const r1 = ND.Colourise.run(line, one, { gap: 4 });
+      assert(near(px(r1.canvas, 20, 100), [0, 170, 0, 255]) && px(r1.canvas, 180, 100)[3] === 0 && px(r1.canvas, 100, 60)[3] === 0 && px(r1.canvas, 5, 5)[3] === 0, 'only the scribbled area is filled');
+      assert(px(r1.canvas, 7, 60)[3] === 0, 'colour does not come out of the other side of the line');
+      // a scribble that touches a line doesn't spill into the next area
+      const touch = U.canvas(W, H); U.ctx(touch).fillStyle = '#aa00aa'; U.ctx(touch).fillRect(30, 40, 75, 6); // runs over the left box edge and out
+      const r2 = ND.Colourise.run(line, touch, { gap: 4 });
+      assert(px(r2.canvas, 20, 100)[3] === 255 && px(r2.canvas, 180, 100)[3] === 0, 'spilling scribble stays put in the boxes');
+      assert(px(r.canvas, 100, 60)[3] === 0 && px(r.canvas, 196, 4)[3] === 0, 'outside stays empty (white hint) — the gap did not leak');
+      const r0 = ND.Colourise.run(line, U.ctx(hints) && (() => { const c = U.canvas(W, H); U.ctx(c).fillStyle = '#0000ff'; U.ctx(c).fillRect(140, 50, 10, 6); return c; })(), { gap: 0 });
+      assert(px(r0.canvas, 100, 60)[3] !== 0, 'without gap closing the 6px gap leaks');
+      assert(ND.Colourise.run(line, U.canvas(W, H), {}) === null, 'no hints → nothing to do');
+    });
+    await test('animation: keyframes hold, auto-key on paint, undo, resize, save/load', async () => {
+      const d = new ND.Doc(64, 48, '#ffffff'), L = d.addLayer('Ink'), A = ND.Anim;
+      A.state(d).length = 10;
+      U.ctx(L.canvas).fillStyle = '#f00'; U.ctx(L.canvas).fillRect(0, 0, 10, 10);
+      assert(A.animate(d, L) && A.keys(L).join() === '0', 'layer animated with its picture on frame 1');
+      A.goto(d, 4);
+      assert(near(px(L.canvas, 5, 5), [255, 0, 0, 255]), 'frame 5 holds the frame-1 drawing');
+      A.state(d).autoKey = 'blank';
+      d.paintOnActive('fill', (x) => { x.fillStyle = '#00f'; x.fillRect(20, 20, 10, 10); });
+      assert(A.keys(L).join() === '0,4', 'painting on frame 5 made a new drawing');
+      assert(px(L.canvas, 5, 5)[3] === 0 && near(px(L.canvas, 25, 25), [0, 0, 255, 255]), 'blank drawing with the new paint');
+      A.goto(d, 2);
+      assert(near(px(L.canvas, 5, 5), [255, 0, 0, 255]) && px(L.canvas, 25, 25)[3] === 0, 'frame 3 still shows the first drawing');
+      A.goto(d, 9);
+      assert(near(px(L.canvas, 25, 25), [0, 0, 255, 255]), 'last drawing holds to the end');
+      A.addKey(d, L, 'copy', 7);
+      A.goto(d, 7);
+      assert(near(px(L.canvas, 25, 25), [0, 0, 255, 255]), 'duplicate copies the held drawing');
+      d.history.undo();
+      assert(A.keys(L).join() === '0,4', 'undo removes the duplicate');
+      d.history.undo(); d.history.undo();
+      assert(A.keys(L).join() === '0', 'undo removes the auto key');
+      d.history.redo(); d.history.redo();
+      A.goto(d, 5);
+      assert(near(px(L.canvas, 25, 25), [0, 0, 255, 255]), 'redo brings the paint back');
+      A.moveKey(d, L, 4, 6);
+      assert(A.keys(L).join() === '0,6', 'drawing moved to frame 7');
+      d.resizeAll(32, 24, (x, c) => x.drawImage(c, 0, 0, 32, 24), 'Scale');
+      assert(L.frames[0].width === 32 && L.frames[6].width === 32 && L.canvas.width === 32, 'resizing scales every drawing');
+      const d2 = await ND.Store.deserialize(ND.Store.serialize(d));
+      const L2 = d2.allLayers().find((l) => l.frames);
+      assert(L2 && A.keys(L2).join() === '0,6' && d2.anim.length === 10, 'frames and timeline saved');
+      A.goto(d2, 8);
+      assert(near(px(L2.canvas, 12, 12), [0, 0, 255, 255]), 'loaded frames play back');
+      const f0 = A.renderFrame(d2, 0), f8 = A.renderFrame(d2, 8);
+      assert(near(px(f0, 2, 2), [255, 0, 0, 255]) && near(px(f8, 2, 2), [255, 255, 255, 255]), 'whole frames render');
+    });
+    await test('animation: GIF encoder makes a valid looping GIF', async () => {
+      const mk = (col) => { const c = U.canvas(40, 30), x = U.ctx(c); x.fillStyle = '#fff'; x.fillRect(0, 0, 40, 30); x.fillStyle = col; x.fillRect(5, 5, 20, 15); return c; };
+      const blob = ND.Anim.encodeGIF([mk('#ff0000'), mk('#00a000'), mk('#0000ff')], 8, true);
+      const head = new Uint8Array(await blob.arrayBuffer());
+      assert(String.fromCharCode(...head.slice(0, 6)) === 'GIF89a' && head[head.length - 1] === 0x3b, 'header and trailer');
+      const img = await U.blobToImage(blob), c = U.canvas(40, 30); U.ctx(c).drawImage(img, 0, 0);
+      assert(near(px(c, 10, 10), [255, 0, 0, 255], 12) && near(px(c, 35, 25), [255, 255, 255, 255], 12), 'first frame decodes correctly');
+      if (typeof ImageDecoder !== 'undefined') {
+        const dec = new ImageDecoder({ data: await blob.arrayBuffer(), type: 'image/gif' });
+        await dec.tracks.ready;
+        assert(dec.tracks.selectedTrack.frameCount === 3, 'three frames (' + dec.tracks.selectedTrack.frameCount + ')');
+        const fr = await dec.decode({ frameIndex: 2 }), cc = U.canvas(40, 30); U.ctx(cc).drawImage(fr.image, 0, 0);
+        assert(near(px(cc, 10, 10), [0, 0, 255, 255], 12), 'third frame is blue');
+      }
+      // bigger, noisy frame exercises the LZW table reset
+      const n = U.canvas(300, 200), nx = U.ctx(n), id = nx.createImageData(300, 200);
+      for (let i = 0; i < id.data.length; i += 4) { id.data[i] = (i * 7) % 256; id.data[i + 1] = (i * 13) % 256; id.data[i + 2] = (i * 3) % 256; id.data[i + 3] = 255; }
+      nx.putImageData(id, 0, 0);
+      const img2 = await U.blobToImage(ND.Anim.encodeGIF([n], 10, false)), c2 = U.canvas(300, 200); U.ctx(c2).drawImage(img2, 0, 0);
+      assert(near(px(c2, 299, 199), px(n, 299, 199), 60), 'large noisy frame decodes to the end');
+    });
+    await test('AI upscaling: tile layout covers every pixel exactly once', () => {
+      for (const L of [5, 96, 97, 150, 1000, 1234]) {
+        const T = 96, list = ND.AI.tiles(Math.max(L, T), T, 8), cover = new Uint8Array(Math.max(L, T));
+        list.forEach((t) => { assert(t.p >= 0 && t.p + T <= Math.max(L, T), 'tile inside'); assert(t.a >= t.p + (t.p ? 8 : 0) - 1 && t.b <= t.p + T, 'owned part within tile (' + L + ')'); for (let i = t.a; i < t.b; i++) cover[i]++; });
+        assert(cover.every((c) => c === 1), 'covered once for length ' + L);
+      }
+      assert(ND.AI.UPSCALERS.every((id) => ND.AI.MODELS[id].kind === 'upscale' && ND.AI.MODELS[id].commercial), 'upscalers listed, Apache-licensed');
+    });
+    await test('GPU blending matches the CPU maths for every special blend mode', () => {
+      const W = 80, H = 64, mk = (seed) => { const c = U.canvas(W, H), x = U.ctx(c), id = x.createImageData(W, H); let s = seed; const r = () => (s = (s * 16807) % 2147483647) % 256; for (let i = 0; i < id.data.length; i += 4) { id.data[i] = r(); id.data[i + 1] = r(); id.data[i + 2] = r(); id.data[i + 3] = (i / 4) % 7 === 0 ? 0 : 255; } x.putImageData(id, 0, 0); return c; };
+      const dst = mk(7), src = mk(99);
+      const modes = ND.Blend.MODES.map((m) => m.id).filter((m) => !ND.Blend.isNative(m));
+      assert(modes.length === 12 && modes.every((m) => ND.GPU.supports(m)), 'all 12 special modes have a GPU version');
+      let worst = 0, gpuRan = 0;
+      for (const m of modes) {
+        const a = U.clone(dst), b = U.clone(dst);
+        const ok = ND.GPU.blend(U.ctx(a), 0, 0, src, 0, 0, W, H, m, 0.8);
+        ND.GPU.blendCPU(U.ctx(b), 0, 0, src, 0, 0, W, H, m, 0.8);
+        if (!ok) continue;
+        gpuRan++;
+        const da = U.ctx(a).getImageData(0, 0, W, H).data, db = U.ctx(b).getImageData(0, 0, W, H).data;
+        for (let i = 0; i < da.length; i += 4) { if (db[i + 3] < 8) continue; for (let k = 0; k < 4; k++) worst = Math.max(worst, Math.abs(da[i + k] - db[i + k])); }
+      }
+      if (gpuRan) assert(worst <= 3, 'GPU and CPU agree within 3 levels (worst ' + worst + ', ' + gpuRan + ' modes on the GPU)');
+      else console.log('no WebGL2 here — CPU path only');
+      // offset areas (dst and src at different positions) also line up
+      const big = U.canvas(200, 150), bx = U.ctx(big); bx.fillStyle = '#808080'; bx.fillRect(0, 0, 200, 150);
+      const c2 = U.clone(big), c3 = U.clone(big);
+      ND.GPU.blendAny(U.ctx(c2), 50, 40, src, 10, 5, 66, 64, 'linearlight', 1);
+      ND.GPU.blendCPU(U.ctx(c3), 50, 40, src, 10, 5, 66, 64, 'linearlight', 1);
+      assert(near(px(c2, 70, 60), px(c3, 70, 60), 3) && near(px(c2, 10, 10), [128, 128, 128, 255]), 'offset blend lands in the right place');
+    });
+    await test('smart objects: lossless transforms, whole-image operations, save/load', async () => {
+      const d = new ND.Doc(200, 160, '#ffffff'), L = d.addLayer('Photo'), x = U.ctx(L.canvas);
+      for (let i = 0; i < 40; i++) { x.fillStyle = i % 2 ? '#d02020' : '#2040d0'; x.fillRect(40 + i * 2, 40, 2, 60); } // fine stripes
+      assert(ND.SmartObj.convert(d, L) === '' && L.smart && L.smart.src.width === 80 && L.smart.src.height === 60, 'converted, original cropped to its content');
+      assert(near(px(L.canvas, 41, 50), [32, 64, 208, 255], 3), 'looks the same after converting');
+      // shrink to 10% and back: a normal layer would be mush, a smart object stays sharp
+      const T = (k) => new DOMMatrix().translate(80, 70).scale(k).translate(-80, -70);
+      ND.SmartObj.setState(L.smart, ND.SmartObj.transformed(ND.SmartObj.state(L.smart), T(0.1))); ND.SmartObj.render(L);
+      ND.SmartObj.setState(L.smart, ND.SmartObj.transformed(ND.SmartObj.state(L.smart), T(10))); ND.SmartObj.render(L);
+      assert(near(px(L.canvas, 41, 50), [32, 64, 208, 255], 6) && near(px(L.canvas, 43, 50), [208, 32, 32, 255], 6), 'stripes still crisp after shrinking and enlarging');
+      // flip the whole image: the smart object's placement flips too, still drawn from the original
+      d.resizeAll(200, 160, (cx, src) => { cx.translate(200, 0); cx.scale(-1, 1); cx.drawImage(src, 0, 0); }, 'Flip');
+      assert(L.smart && Math.abs(L.smart.m[0] + 1) < 1e-6, 'flip became part of the placement');
+      assert(near(px(L.canvas, 200 - 42, 50), [32, 64, 208, 255], 6), 'flipped pixels in the right place');
+      d.history.undo();
+      assert(Math.abs(L.smart.m[0] - 1) < 1e-6 && near(px(L.canvas, 41, 50), [32, 64, 208, 255], 6), 'undo restores placement');
+      // painting on it turns it into a normal layer; undo brings the smart object back
+      d.paintOnActive('fill', (c) => { c.fillStyle = '#0f0'; c.fillRect(0, 0, 5, 5); });
+      assert(L.smart === null, 'painting rasterizes');
+      d.history.undo();
+      assert(L.smart && L.smart.src.width === 80, 'undo brings the smart object back');
+      // save / load
+      const d2 = await ND.Store.deserialize(ND.Store.serialize(d)), L2 = d2.allLayers().find((l) => l.smart);
+      assert(L2 && L2.smart.src.width === 80 && L2.smart.m.length === 6, 'saved with its original');
+      const parts = await ND.Store.autosaveRecord(d), d3 = await ND.Store.restore(parts);
+      assert(d3.allLayers().some((l) => l.smart && l.smart.src.height === 60), 'autosave keeps it too');
+    });
+    await test('files: TIFF save/open (RGBA and CMYK), Krita .kra save/open, PDF, LZF', async () => {
+      const c = U.canvas(130, 70), x = U.ctx(c);
+      x.fillStyle = '#d02040'; x.fillRect(0, 0, 65, 70); x.fillStyle = 'rgba(40,120,220,0.5)'; x.fillRect(65, 0, 65, 70);
+      const tif = await ND.Formats.writeTIFF(c, { icc: ND.Colour.srgbICC() });
+      const back = await ND.Formats.readTIFF(await tif.arrayBuffer());
+      assert(back.canvas.width === 130 && near(px(back.canvas, 10, 10), [208, 32, 64, 255]) && near(px(back.canvas, 100, 10), [40, 120, 220, 128], 3), 'RGBA TIFF round trip (with prediction + Deflate)');
+      assert(back.icc && ND.Colour.parseICC(back.icc).space === 'RGB', 'sRGB profile embedded and readable');
+      const ct = await ND.Formats.readTIFF(await (await ND.Formats.writeTIFF(c, { cmyk: true })).arrayBuffer());
+      assert(ct.cmyk && Math.abs(px(ct.canvas, 10, 10)[0] - 208) < 40, 'CMYK TIFF opens with similar colours');
+      // LZF used by Krita tiles
+      const data = new Uint8Array(20000); for (let i = 0; i < data.length; i++) data[i] = (i % 97) < 50 ? 7 : (i * 31) & 255;
+      const z = ND.Formats.lzfCompress(data), un = ND.Formats.lzfDecompress(z, data.length);
+      assert(z.length < data.length && un && un.every((v, i) => v === data[i]), 'LZF round trip (' + data.length + ' → ' + z.length + ' bytes)');
+      // .kra
+      const d = new ND.Doc(150, 90, '#ffffff'), L = d.addLayer('Ink'), G = d.addGroup();
+      U.ctx(L.canvas).fillStyle = '#00a050'; U.ctx(L.canvas).fillRect(70, 10, 66, 70);
+      L.blendMode = 'multiply'; L.opacity = 0.6; L.mask = ND.DocMask.newMask(150, 90, '#fff'); U.ctx(L.mask).fillStyle = '#000'; U.ctx(L.mask).fillRect(70, 10, 10, 10);
+      const kra = await ND.Formats.writeKRA(d), d2 = await ND.Formats.readKRA(await kra.arrayBuffer(), 't.kra');
+      const L2 = d2.allLayers().find((l) => l.name === 'Ink');
+      assert(L2 && L2.blendMode === 'multiply' && Math.abs(L2.opacity - 0.6) < 0.01, 'layer, blend mode and opacity survive .kra');
+      assert(near(px(L2.canvas, 100, 40), [0, 160, 80, 255]) && px(L2.canvas, 20, 40)[3] === 0, 'pixels survive .kra tiles');
+      assert(L2.mask && px(L2.mask, 72, 12)[0] < 10 && px(L2.mask, 100, 50)[0] > 245, 'layer mask survives .kra');
+      assert(d2.allNodes().some((n) => n.isGroup), 'groups survive .kra');
+      const pdf = new Uint8Array(await (await ND.Formats.writePDF([c], { dpi: 300, jpeg: 0 })).arrayBuffer()), ptxt = new TextDecoder().decode(pdf.slice(0, 20));
+      assert(ptxt.startsWith('%PDF-1.4') && new TextDecoder().decode(pdf.slice(-6)).includes('%%EOF'), 'PDF written');
+    });
+    await test('colour: ICC reading, sRGB profile, CMYK proof round trip, Lab maths', () => {
+      const P = ND.Colour.parseICC(ND.Colour.srgbICC());
+      const xyz = P.toXYZ([1, 1, 1]);
+      assert(P.space === 'RGB' && Math.abs(xyz[1] - 1) < 0.01 && Math.abs(xyz[0] - 0.9642) < 0.01, 'built sRGB profile reads back (white = D50)');
+      const lab = ND.Colour.srgbToLab(255, 255, 255);
+      assert(Math.abs(lab[0] - 100) < 0.1 && Math.abs(lab[1]) < 0.5, 'white is L=100');
+      const k = ND.Colour.rgbToCmyk(255, 255, 255, 255), k2 = ND.Colour.rgbToCmyk(0, 0, 0, 255);
+      assert(k.every((v) => v < 6) && k2[3] > 200, 'white = no ink, black uses K');
+      const grey = ND.Colour.rgbToCmyk01(128, 128, 128), back = ND.Colour.cmykToRgb(...grey);
+      assert(back.every((v) => Math.abs(v - 128) < 12), 'grey round-trips through the press model (' + back.join(',') + ')');
+      const c = U.canvas(4, 1), x = U.ctx(c); x.fillStyle = '#00ff00'; x.fillRect(0, 0, 4, 1);
+      ND.Colour.proofRegion(x, { x: 0, y: 0, w: 4, h: 1 }, true, false);
+      const g = px(c, 0, 0);
+      assert(g[1] < 240, 'screen green is duller in print preview (' + g.join(',') + ')');
+      ND.Colour.proofRegion(x, { x: 0, y: 0, w: 4, h: 1 }, false, true);
+    });
+    await test('photoshop export keeps text and adjustment layers editable', async () => {
+      const d = new ND.Doc(120, 80, '#ffffff'), L = d.addLayer('Hello');
+      L.textData = { text: 'Hello', font: 'Arial', size: 24, x: 10, y: 10, colour: '#ff0000', align: 'left', lineHeight: 1.2, spacing: 0, warp: 'none', amount: 0, outline: 0, shadow: false };
+      ND.Render.drawText(U.ctx(L.canvas), L.textData, 10, 10, '#ff0000');
+      d.addAdjustment('levels', ND.Adjust.defaults('levels')); d.addAdjustment('hsl', Object.assign(ND.Adjust.defaults('hsl'), { h: 30 })); d.addAdjustment('develop', ND.Adjust.defaults('develop'));
+      const b = ND.Store.exportPSD(d), u = new Uint8Array(await b.arrayBuffer()), s = new TextDecoder('latin1').decode(u);
+      assert(s.includes('8BIMTySh') && s.includes('EngineData'), 'text layer record');
+      assert(s.includes('8BIMlevl') && s.includes('8BIMhue2'), 'levels and hue/saturation records');
+      assert(b.lost.length === 1, 'one layer kind Photoshop has no equivalent for is reported');
+      window.__psdBytes = u;
+      const back = await ND.PSD.importPSD(u.buffer, 't.psd');
+      assert(back.allLayers().some((l) => l.name === 'Hello'), 'our own importer still reads it');
     });
     document.getElementById('sum').innerHTML = '<span class="' + (fail ? 'fail' : 'pass') + '">' + pass + ' passed, ' + fail + ' failed</span>';
   })();

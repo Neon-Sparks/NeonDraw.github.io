@@ -8,7 +8,7 @@
     let tab = 'layers';
     const tabs = h('div.nd-tabs');
     const body = h('div.nd-tabbody');
-    [['layers', 'Layers'], ['history', 'History'], ['nav', 'Navigator']].forEach(([id, label]) => {
+    [['layers', 'Layers'], ['paths', 'Paths'], ['history', 'History'], ['nav', 'Navigator']].forEach(([id, label]) => {
       const b = h('button.nd-tab', { type: 'button' }, label);
       b.dataset.id = id;
       b.addEventListener('click', () => { tab = id; render(); });
@@ -17,10 +17,29 @@
     const panel = h('div.nd-docker.nd-layers-docker', tabs, body);
     root.appendChild(panel);
 
+    // Paths (pen tool): pick, rename, and turn into selections, fills, strokes or shape layers
+    function renderPaths() {
+      const d = App.doc, list = h('div.nd-paths');
+      const bar = h('div.nd-row.tight.nd-paths-bar',
+        C.iconButton('plus', 'New path (Pen tool)', () => App.newPath(), 'tiny'),
+        C.button('Selection', () => App.pathToSelection(), { cls: 'sm' }), C.button('Fill', () => App.fillPath(), { cls: 'sm' }),
+        C.button('Stroke', () => App.strokePath(), { cls: 'sm' }), C.button('Shape', () => App.pathToShape(), { cls: 'sm', title: 'Vector shape layer' }),
+        C.iconButton('trash', 'Delete the active path', () => App.deletePath(), 'tiny'));
+      if (!d.paths.length) list.appendChild(h('div.nd-hint', 'No paths yet — pick the Pen tool (P), click to place points and drag to make curves.'));
+      d.paths.forEach((p) => {
+        const row = h('div.nd-path-row' + (p.id === d.activePath ? '.active' : ''), ND.icon('path', 15), h('span.nd-layer-name', p.name), h('span.nd-tag', p.nodes.length + ' pts' + (p.closed ? '' : ' · open')));
+        row.addEventListener('click', () => { d.activePath = p.id; App.setTool('pen'); App.emit('paths'); ND.View.request(); });
+        row.addEventListener('dblclick', () => { const n = window.prompt('Path name', p.name); if (n) { p.name = n; App.emit('paths'); } });
+        list.appendChild(row);
+      });
+      body.append(bar, list);
+    }
+    App.on('paths', () => { if (tab === 'paths') render(); });
     function render() {
       tabs.querySelectorAll('.nd-tab').forEach((b) => b.classList.toggle('active', b.dataset.id === tab));
       U.clear(body);
       if (tab === 'layers') renderLayers();
+      else if (tab === 'paths') renderPaths();
       else if (tab === 'history') renderHistory();
       else renderNav();
     }
@@ -105,10 +124,10 @@
         const fxOn = n.effects && ND.Effects.any(n.effects);
         const fxB = fxOn ? h('button.nd-fxtag', { title: 'Layer style — click to edit' }, 'fx') : null;
         if (fxB) fxB.addEventListener('click', (e) => { e.stopPropagation(); d.setActive(n); ND.AdjustPanel.layerStyle(n); });
-        const flags = h('span.nd-layer-flags', fxB, n.textData ? h('span.nd-tag', 'T') : null, n.clip ? ND.icon('clip', 12) : null, n.alphaLock ? ND.icon('alpha', 12) : null, n.locked ? ND.icon('lock', 12) : null, n.blendMode !== 'normal' ? h('span.nd-tag', ND.Blend.label(n.blendMode)) : null, n.opacity < 1 ? h('span.nd-tag', Math.round(n.opacity * 100) + '%') : null);
+        const flags = h('span.nd-layer-flags', fxB, n.textData ? h('span.nd-tag', 'T') : null, n.smart ? h('span.nd-tag.smart', { title: 'Smart object — double-click to edit its contents' }, '◈') : null, n.clip ? ND.icon('clip', 12) : null, n.alphaLock ? ND.icon('alpha', 12) : null, n.locked ? ND.icon('lock', 12) : null, n.blendMode !== 'normal' ? h('span.nd-tag', ND.Blend.label(n.blendMode)) : null, n.opacity < 1 ? h('span.nd-tag', Math.round(n.opacity * 100) + '%') : null);
         const row = h('div.nd-layer' + (n === d.active ? '.active' : '') + (n.isGroup ? '.group' : '') + (n.clip ? '.clipped' : '') + (!d.effectiveVisible(n) ? '.hidden' : ''), { draggable: true, style: { paddingLeft: 4 + depth * 14 + 'px' } }, eye, n.isGroup ? ND.icon('folder', 15) : null, thumb, mthumb, name, flags);
         row.addEventListener('click', () => d.setActive(n));
-        row.addEventListener('dblclick', (e) => { e.stopPropagation(); rename(n, name); });
+        row.addEventListener('dblclick', (e) => { e.stopPropagation(); if (n.smart && e.target !== name && !name.contains(e.target)) { d.setActive(n); App.editSmart(); return; } rename(n, name); });
         row.addEventListener('contextmenu', (e) => { e.preventDefault(); d.setActive(n); layerMenu(row); });
         row.addEventListener('dragstart', (e) => { dragNode = n; e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', n.name); } catch (err) { /* ignore */ } });
         row.addEventListener('dragover', (e) => {

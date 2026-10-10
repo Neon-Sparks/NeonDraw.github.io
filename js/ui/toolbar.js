@@ -146,6 +146,8 @@
     App.on('colour', () => controls.forEach((c) => c.refresh && c.refresh()));
     App.on('stamps', () => { if (App.state.tool === 'stamp') render(); });
     App.on('patterns', () => { if (App.state.tool === 'fill') render(); });
+    App.on('paths', () => { if (App.state.tool === 'pen') C.whenFree(optEl, render); });
+    App.on('doc', (t) => { if ((t === 'active' || t === 'layers') && App.state.tool === 'pen') C.whenFree(optEl, render); });
     App.on('state', () => controls.forEach((c) => c.refresh && c.refresh()));
     render();
   };
@@ -176,7 +178,7 @@
       add(brushSlider('Size', 'size', 1, 1000, { log: true, unit: 'px', fmt: (v) => (v < 10 ? v.toFixed(1) : Math.round(v)) }));
       add(brushSlider('Opacity', 'opacity', 0.01, 1, Object.assign({ step: 0.01 }, pct)));
       add(brushSlider('Flow', 'flow', 0.01, 1, Object.assign({ step: 0.01 }, pct)));
-      add(brushSlider('Smoothing', 'stabilizer', 0, 0.98, Object.assign({ step: 0.01 }, pct)));
+      add(brushSlider('Smoothing', 'stabilizer', 0, 1, Object.assign({ step: 0.01 }, pct)));
       if (!ND.Brush.DIRECT[s.brush.engine]) add(C.select('Blend', ND.Blend.MODES.map((m) => ({ value: m.id, label: m.label, group: m.cat })), () => s.brush.blend, (v) => App.setBrush({ blend: v })));
       add(...T.symmetryControls());
       if (tool === 'brush') {
@@ -242,6 +244,25 @@
       T.textOptions(add);
     } else if (tool === 'stamp') {
       T.stampOptions(add);
+    } else if (tool === 'pen') {
+      const d = App.doc, L = d.active && d.active.shapeData ? d.active : null;
+      if (L) {
+        const sd = L.shapeData;
+        add(C.check('Fill', () => !!sd.fill, (v) => App.setShapeStyle({ fill: v ? sd.fill || S().fg : null })), C.colourInput(() => sd.fill || S().fg, (v) => App.setShapeStyle({ fill: v }), 'Fill colour'));
+        add(C.check('Stroke', () => !!sd.stroke, (v) => App.setShapeStyle({ stroke: v ? sd.stroke || S().fg : null })), C.colourInput(() => sd.stroke || S().fg, (v) => App.setShapeStyle({ stroke: v }), 'Stroke colour'));
+        add(C.slider('Width', { min: 0.5, max: 200, log: true, unit: 'px', get: () => sd.width, set: (v) => App.setShapeStyle({ width: v }), fmt: (v) => (v < 10 ? v.toFixed(1) : Math.round(v)) }));
+        add(C.hint('Editing the vector shape “' + L.name + '” — drag points; click empty canvas to add a sub-path'));
+      } else {
+        const list = d.paths.map((p) => [p.id, p.name + (p.closed ? '' : ' (open)')]);
+        if (list.length) add(C.select('Path', list, () => d.activePath, (v) => { d.activePath = v; App.emit('paths'); ND.View.request(); }));
+        add(C.button('New path', () => App.newPath(), { cls: 'sm', icon: 'plus' }));
+        add(C.button('Selection', () => App.pathToSelection(), { cls: 'sm', title: 'Turn the path into a selection' }));
+        add(C.button('Fill', () => App.fillPath(), { cls: 'sm', title: 'Fill the path with the foreground colour' }));
+        add(C.button('Stroke', () => App.strokePath(), { cls: 'sm', icon: 'brush', title: 'Paint along the path with the current brush' }), stateCheck('Pressure taper', 'strokePressure', 'Fade the stroke in and out like a pen'));
+        add(C.button('Shape layer', () => App.pathToShape(), { cls: 'sm', icon: 'path', title: 'Make an editable vector shape layer from the path' }));
+        add(C.button('Close / open', () => App.toggleClosePath(), { cls: 'sm' }), C.button('Delete', () => App.deletePath(), { cls: 'sm', icon: 'trash' }));
+        add(C.hint('Click = point · drag = curve · click the first point to close · Enter finishes · Alt+click point = corner/smooth · click a segment to add a point · Ctrl+drag moves the path'));
+      }
     } else if (tool === 'smartsel') {
       add(C.segmented([['add', 'Add'], ['subtract', 'Subtract']], () => (S().selMode === 'subtract' ? 'subtract' : 'add'), (v) => App.set('selMode', v)));
       add(stateSlider('Size', 'smartSize', 4, 400, { log: true, unit: 'px', fmt: (v) => Math.round(v) }));
@@ -309,7 +330,15 @@
     });
     bi.refresh = () => {};
     add(bi);
-    add(C.segmented([['left', 'Left'], ['center', 'Centre'], ['right', 'Right']], () => t.align, (v) => set('align', v)));
+    const vt = ND.View.text;
+    add(C.segmented([['left', 'Left'], ['center', 'Centre'], ['right', 'Right'], ['justify', 'Justify', 'Justify (paragraph boxes)']], () => t.align, (v) => set('align', v)));
+    add(C.slider('Line height', { min: 0.6, max: 3, step: 0.05, get: () => t.lineHeight, set: (v) => set('lineHeight', v), fmt: (v) => v.toFixed(2) }));
+    const setT = (k, v) => { if (ND.View.text) { ND.View.text[k] = v; ND.View.request(); } };
+    if (vt && vt.onPath) {
+      add(C.slider('Start along path', { min: 0, max: 100, get: () => vt.pathOffset || 0, set: (v) => setT('pathOffset', v), unit: '%' }), C.slider('Lift', { min: -200, max: 200, get: () => vt.baselineShift || 0, set: (v) => setT('baselineShift', v), unit: 'px' }));
+    } else if (vt) {
+      add(C.slider('Box width', { min: 0, max: Math.max(200, App.doc.width), get: () => vt.boxWidth || 0, set: (v) => setT('boxWidth', Math.round(v)), unit: 'px', fmt: (v) => (v < 1 ? 'off' : Math.round(v)) }));
+    }
     add(C.slider('Spacing', { min: -10, max: 60, get: () => t.spacing, set: (v) => set('spacing', v), unit: 'px' }));
     add(C.slider('Outline', { min: 0, max: 40, get: () => t.outline, set: (v) => set('outline', v), unit: 'px' }), C.colourInput(() => t.outlineColour, (v) => set('outlineColour', v), 'Outline colour'));
     add(C.check('Shadow', () => t.shadow, (v) => set('shadow', v)));
@@ -317,7 +346,7 @@
     add(C.check('New layer', () => t.newLayer, (v) => set('newLayer', v), 'Put the text on its own layer'));
     if (ND.View.text) {
       add(C.button('Place text', () => ND.View.commitText(), { cls: 'primary', title: 'Ctrl+Enter' }), C.button('Cancel', () => ND.View.cancelText()));
-    } else add(C.hint('Click the canvas to start typing'));
+    } else add(C.hint('Click to type · drag sideways for a wrapping paragraph box · click on a path (Pen tool) to type along it'));
   };
 
   T.stampOptions = function (add) {

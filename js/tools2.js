@@ -54,7 +54,7 @@
     const label = U.h('span', ND.icon('assist', 15), U.h('b', ' Perspective'));
     const edit = C.button('Edit', () => App.setTool('assist'), { cls: 'sm', title: 'Move the vanishing points' });
     const snap = C.button('Snap', () => App.set('snapAssist', !App.state.snapAssist), { cls: 'sm', title: 'Brush strokes follow the perspective lines' });
-    const show = C.button('Hide', () => App.set('showAssist', !App.state.showAssist), { cls: 'sm' });
+    const show = C.button('Hide', () => { App.set('showAssist', !App.state.showAssist); if (!App.state.showAssist && App.state.tool === 'assist') App.setTool('brush'); }, { cls: 'sm' });
     const del = C.button('Remove', () => T.clearAssistants(), { cls: 'sm', title: 'Delete all perspective guides (undoable)' });
     bar.append(label, edit, snap, show, del);
     vp.appendChild(bar);
@@ -67,6 +67,8 @@
       V().request();
     };
     ['state', 'tool', 'doc', 'docchange'].forEach((e) => App.on(e, refresh));
+    // editing hidden guides makes no sense: picking the edit tool shows them
+    App.on('tool', () => { if (App.state.tool === 'assist' && !App.state.showAssist) App.set('showAssist', true); });
     refresh();
   };
   function handles(a) { return a.type === 'vp' ? [a] : [a.a, a.b]; }
@@ -134,7 +136,7 @@
     const d = App.doc, st = App.state;
     if (d.quickMask) { qmUpdate(d); cx.drawImage(qmCanvas, 0, 0); }
     // assistants
-    if (d.assistants.length && (st.showAssist || st.tool === 'assist')) {
+    if (d.assistants.length && st.showAssist) {
       cx.save();
       cx.lineWidth = lw;
       for (const a of d.assistants) {
@@ -180,6 +182,34 @@
     }
     if (d.editMask && d.active && d.active.mask) {
       cx.save(); cx.strokeStyle = 'rgba(255,255,255,0.7)'; cx.setLineDash([10 * lw, 6 * lw]); cx.lineWidth = 2 * lw; cx.strokeRect(0, 0, d.width, d.height); cx.restore();
+    }
+    if (ND.Pen) ND.Pen.overlay(cx, lw, zr);
+    const VV = V();
+    // smoothing "string": from the line's end to the pen
+    if (VV.stroke && VV.stroke.rope && VV.stroke.smooth && VV.stroke.lastRaw && VV.stroke.s.stabilizer >= 0.15) {
+      const a = VV.stroke.smooth, b = VV.stroke.lastRaw;
+      if (Math.hypot(b.x - a.x, b.y - a.y) > 2 * zr) {
+        cx.save(); cx.strokeStyle = 'rgba(255,255,255,0.75)'; cx.lineWidth = lw; cx.setLineDash([3 * lw, 3 * lw]);
+        cx.beginPath(); cx.moveTo(a.x, a.y); cx.lineTo(b.x, b.y); cx.stroke();
+        cx.beginPath(); cx.arc(b.x, b.y, 2.5 * zr, 0, U.TAU); cx.fillStyle = '#fff'; cx.fill();
+        cx.restore();
+      }
+    }
+    if (VV.stroke && VV.predicted && VV.lastPt && App.state.tool === 'brush' && !App.state.eraserMode) {
+      const b = App.state.brush;
+      cx.save();
+      cx.globalAlpha = Math.min(0.8, b.opacity == null ? 0.8 : b.opacity);
+      cx.strokeStyle = App.state.fg; cx.lineCap = 'round'; cx.lineJoin = 'round';
+      cx.lineWidth = Math.max(lw, (b.size || 4) * 0.8 * (VV.lastPt.p || 1));
+      cx.beginPath(); cx.moveTo(VV.lastPt.x, VV.lastPt.y);
+      VV.predicted.forEach((q) => cx.lineTo(q.x, q.y));
+      cx.stroke();
+      cx.restore();
+    }
+    if (ND.Anim && d.anim && !(ND.Timeline && ND.Timeline.playing)) {
+      // onion skins: neighbouring drawings of the active layer, tinted
+      const list = ND.Anim.onion(d);
+      if (list.length) { cx.save(); list.forEach((o) => { cx.globalAlpha = o.alpha; cx.drawImage(o.canvas, 0, 0); }); cx.restore(); }
     }
   };
 
@@ -238,6 +268,7 @@
       return true;
     }
     // move an existing guide with the move tool
+    if (tool === 'pen' && ND.Pen) return ND.Pen.down(e, p);
     if (tool === 'move' && d.guides.length) {
       for (let i = 0; i < d.guides.length; i++) {
         const g = d.guides[i], s = V().toScreen(g.axis === 'x' ? g.pos : p.x, g.axis === 'y' ? g.pos : p.y);
@@ -315,7 +346,8 @@
   T.move = function (e, p, l) {
     const dr = V().drag, d = App.doc;
     if (!dr || !dr.tool.startsWith('x-')) return false;
-    if (dr.tool === 'x-guide') { dr.pos = dr.axis === 'x' ? Math.round(p.x) : Math.round(p.y); dr.out = dr.axis === 'x' ? l.sx < RULER : l.sy < RULER; V().request(); }
+    if (dr.tool === 'x-pen') ND.Pen.move(e, p);
+    else if (dr.tool === 'x-guide') { dr.pos = dr.axis === 'x' ? Math.round(p.x) : Math.round(p.y); dr.out = dr.axis === 'x' ? l.sx < RULER : l.sy < RULER; V().request(); }
     else if (dr.tool === 'x-assist') { const q = e.shiftKey ? p : T.snap(p); dr.h.x = q.x; dr.h.y = q.y; V().request(); }
     else if (dr.tool === 'x-patch') { dr.cur = p; V().request(); }
     else if (dr.tool === 'x-patchsel') { dr.pts.push({ x: p.x, y: p.y }); V().request(); }
@@ -335,6 +367,7 @@
   };
   T.up = function (e, dr) {
     const d = App.doc;
+    if (dr.tool === 'x-pen') { ND.Pen.up(dr); return; }
     if (dr.tool === 'x-guide') {
       const g = d.guides.slice();
       if (dr.index >= 0) g.splice(dr.index, 1);

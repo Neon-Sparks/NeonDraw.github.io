@@ -9,12 +9,14 @@
 
   /* ---------- busy overlay ---------- */
   let busyEl = null;
-  UI.busy = function (text) {
-    if (!busyEl) { busyEl = h('div.nd-busy', h('div.nd-busy-card', h('div.nd-spinner'), h('div.nd-busy-text'))); document.body.appendChild(busyEl); }
+  UI.busy = function (text, onCancel) {
+    if (!busyEl) { busyEl = h('div.nd-busy', h('div.nd-busy-card', h('div.nd-spinner'), h('div.nd-busy-text'), h('div.nd-busy-btns'))); document.body.appendChild(busyEl); }
     busyEl.querySelector('.nd-busy-text').textContent = text;
+    const b = busyEl.querySelector('.nd-busy-btns');
+    if (onCancel !== undefined) { U.clear(b); if (onCancel) b.appendChild(C.button('Cancel', onCancel, { cls: 'sm' })); }
     busyEl.classList.add('show');
   };
-  UI.idle = function () { if (busyEl) busyEl.classList.remove('show'); };
+  UI.idle = function () { if (busyEl) { busyEl.classList.remove('show'); U.clear(busyEl.querySelector('.nd-busy-btns')); } };
 
   /* ---------- a model card (used by the picker and the manager) ---------- */
   function card(id, o) {
@@ -69,43 +71,48 @@
       usage.textContent = est ? 'This site is using ' + MB(est.usage || 0) + ' of browser storage (about ' + Math.round((est.quota || 0) / 1e9) + ' GB available).' : '';
     };
     const cards = AI.ORDER.map((id) => card(id, { manage: true, onChange: showUsage }));
+    const upCards = AI.UPSCALERS.map((id) => card(id, { manage: true, onChange: showUsage }));
     const body = h('div.nd-ai',
-      h('p', 'AI models find the subject of a photo for Remove background, AI masks and AI selections. Download the ones you want once; they are stored in this browser and then work offline. Images are processed on your own computer and are never uploaded.'),
+      h('p', 'AI models find the subject of a photo for Remove background, AI masks and AI selections, and enlarge pictures (Image ▸ Enlarge with AI). Download the ones you want once; they are stored in this browser and then work offline. Images are processed on your own computer and are never uploaded.'),
       why ? unsupportedBox(why) : null,
+      h('h4.nd-ai-sec', 'Subject finders'),
       ...cards,
+      h('h4.nd-ai-sec', 'Upscalers (enlarge pictures)'),
+      ...upCards,
       h('div.nd-hint', 'Speed: with a graphics card that supports WebGPU (Chrome, Edge) a picture takes about a second; on the CPU expect 2–3 s for MODNet and 10–40 s for ISNet / RMBG. ISNet always uses the CPU for now. If a model ever fails on the graphics card, Neon Draw switches it to the CPU automatically.'),
       usage);
-    if (why) cards.forEach((c) => c.querySelectorAll('button').forEach((b) => { b.disabled = true; }));
+    if (why) cards.concat(upCards).forEach((c) => c.querySelectorAll('button').forEach((b) => { b.disabled = true; }));
     showUsage();
     D().modal('AI models', body, [{ label: 'Close', primary: true }], { wide: true, noFocus: true });
   };
 
   /* ---------- picker ---------- */
   // Resolves to a model id (downloaded and ready) or null.
-  UI.choose = function (title, action, extra) {
+  UI.choose = function (title, action, extra, list, pref) {
+    list = list || AI.ORDER; pref = pref || 'aiModel';
     return new Promise((resolve) => {
       const why = AI.unsupported();
       if (why) { D().modal(title, unsupportedBox(why), [{ label: 'Close', primary: true }]); resolve(null); return; }
-      let sel = App.state.aiModel && AI.MODELS[App.state.aiModel] ? App.state.aiModel : 'isnet';
-      const cards = AI.ORDER.map((id) => card(id, { pick: true }));
+      let sel = list.includes(App.state[pref]) ? App.state[pref] : list[0];
+      const cards = list.map((id) => card(id, { pick: true }));
       const warn = h('div.nd-ai-warn');
       const sync = () => {
-        cards.forEach((c, i) => { c.radio.checked = AI.ORDER[i] === sel; c.classList.toggle('sel', AI.ORDER[i] === sel); });
+        cards.forEach((c, i) => { c.radio.checked = list[i] === sel; c.classList.toggle('sel', list[i] === sel); });
         warn.style.display = AI.MODELS[sel].commercial ? 'none' : '';
         warn.textContent = 'RMBG-1.4 gives the highest quality, but its licence only allows non-commercial use. Don’t use images processed with it in anything you sell or use commercially — choose ISNet or MODNet for that.';
       };
-      cards.forEach((c, i) => c.radio.addEventListener('change', () => { sel = AI.ORDER[i]; sync(); }));
-      let remember = !!App.state.aiRemember;
+      cards.forEach((c, i) => c.radio.addEventListener('change', () => { sel = list[i]; sync(); }));
+      let remember = pref === 'aiModel' && !!App.state.aiRemember;
       const body = h('div.nd-ai', h('p', 'Choose the AI model to use. Models you haven’t downloaded yet are downloaded first (once).'), ...cards, warn,
         extra || null,
-        C.check('Use this model next time without asking', () => remember, (v) => { remember = v; }));
+        pref === 'aiModel' ? C.check('Use this model next time without asking', () => remember, (v) => { remember = v; }) : null);
       sync();
       let done = false;
       const finish = (v) => { if (!done) { done = true; resolve(v); } };
       D().modal(title, body, [
         { label: 'Cancel', action: () => finish(null) },
         { label: action, primary: true, action: () => {
-          App.set('aiModel', sel); App.set('aiRemember', remember);
+          App.set(pref, sel); if (pref === 'aiModel') App.set('aiRemember', remember);
           AI.isDownloaded(sel).then((have) => {
             if (have) { D().close(); finish(sel); return; }
             UI.download(sel).then(() => { D().close(); finish(sel); }).catch(() => {});
@@ -190,6 +197,39 @@
     if (!hit.size && !subtract) App.toast('No object found under that stroke — try painting over the object itself');
     hit.forEach((r) => (subtract ? S.chosen.delete(r) : S.chosen.add(r)));
     return S.chosen.size ? AI.regionMask(S.regions, S.chosen, d.width, d.height) : null;
+  };
+
+  /* ---------- Image ▸ Enlarge with AI ---------- */
+  App.aiUpscale = async function () {
+    const d = this.doc, n = d.active;
+    let every = false;
+    const pixelLayers = d.allLayers().filter((l) => l.isPixel);
+    const scope = pixelLayers.length > 1 ? C.segmented([['one', 'Active layer with AI'], ['all', 'Every paint layer with AI (slower)']], () => (every ? 'all' : 'one'), (v) => { every = v === 'all'; }) : null;
+    const extra = h('div.nd-col', scope, h('div.nd-hint', 'The whole document gets bigger. ' + (scope ? 'Other layers and masks are enlarged smoothly without AI. ' : '') + 'Undo puts it back. Speed: about 1–2 s per 100 × 100 px area on the CPU, much faster with a WebGPU graphics card.'));
+    const id = await UI.choose('Enlarge with AI', 'Enlarge', extra, AI.UPSCALERS, 'aiUpscaler');
+    if (!id) return;
+    const s = AI.MODELS[id].scale;
+    if (d.width * d.height * s * s > AI.MAX_UPSCALE_PIXELS) return App.toast('The result would be ' + d.width * s + ' × ' + d.height * s + ' px — too big. Crop or shrink the picture first (limit about 40 megapixels).', 6000);
+    const targets = every ? pixelLayers : n && n.isPixel ? [n] : [];
+    if (!targets.length) return App.toast('Pick a paint layer to enlarge');
+    let cancelled = false;
+    const big = new Map();
+    UI.busy('Starting AI…', () => { cancelled = true; UI.busy('Stopping…', null); });
+    const t0 = performance.now();
+    try {
+      for (let i = 0; i < targets.length; i++) {
+        const L = targets[i], pre = targets.length > 1 ? 'Layer ' + (i + 1) + ' of ' + targets.length + ' · ' : '';
+        big.set(L.canvas, await AI.upscale(id, L.canvas, (t) => UI.busy(pre + t), () => cancelled));
+      }
+    } catch (e) {
+      UI.idle();
+      if (/cancel/i.test(e.message)) return App.toast('Enlarging cancelled — nothing was changed');
+      console.error(e); return App.toast('AI failed: ' + e.message, 6000);
+    }
+    UI.idle();
+    d.resizeAll(d.width * s, d.height * s, (x, c) => { const b = big.get(c); if (b) x.drawImage(b, 0, 0); else { x.imageSmoothingEnabled = true; x.drawImage(c, 0, 0, c.width * s, c.height * s); } }, 'Enlarge ' + s + '× (AI)');
+    App.fitView();
+    App.toast('Enlarged ' + s + '× to ' + d.width + ' × ' + d.height + ' with ' + AI.MODELS[id].name + ' (' + Math.round((performance.now() - t0) / 1000) + ' s)', 5000);
   };
 
   ND.AIUI = UI;

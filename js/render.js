@@ -127,24 +127,101 @@
   /* ---------- text ---------- */
   R.fontString = (t) => (t.italic ? 'italic ' : '') + (t.bold ? 'bold ' : '') + t.size + 'px ' + t.font;
   // Draw (possibly multi-line, warped) text with its top-left at (x, y). Returns the bounding box.
+  // Word-wrap text to a box width. Returns [{ s, last }] (last = final line of a paragraph).
+  R.wrapText = function (ctx, text, width) {
+    const out = [];
+    for (const para of String(text || '').split('\n')) {
+      let line = '';
+      const push = (s, last) => out.push({ s: s.replace(/\s+$/, ''), last });
+      for (const tok of para.split(/(\s+)/)) {
+        if (!tok) continue;
+        const test = line + tok;
+        if (ctx.measureText(test).width <= width || !line.trim()) {
+          if (ctx.measureText(test).width > width && !/^\s+$/.test(tok)) {
+            // a single word longer than the box: break it into pieces
+            let piece = line;
+            for (const ch of tok) { if (piece && ctx.measureText(piece + ch).width > width) { push(piece, false); piece = ''; } piece += ch; }
+            line = piece;
+          } else line = test;
+        } else { push(line, false); line = /^\s+$/.test(tok) ? '' : tok; }
+      }
+      push(line, true);
+    }
+    return out;
+  };
+  // Text along a path: glyphs sit on the curve, rotated to follow it.
+  function drawOnPath(ctx, t, x, y, colour, measureOnly) {
+    const P = ND.Paths, dx = x - (t.px === undefined ? x : t.px), dy = y - (t.py === undefined ? y : t.py);
+    const pts = P.sample(t.onPath, 1), b = P.bounds(t.onPath) || { x: 0, y: 0, w: 0, h: 0 }, pad0 = t.size * 1.2;
+    if (!measureOnly && pts.length > 1) {
+      const txt = String(t.text || '').replace(/\n/g, ' '), chars = [...txt], cw = chars.map((ch) => ctx.measureText(ch).width + (t.spacing || 0));
+      const total = cw.reduce((a, c) => a + c, 0), len = pts[pts.length - 1].d, off = ((t.pathOffset || 0) / 100) * len;
+      const start = t.align === 'center' ? (len - total) / 2 + off : t.align === 'right' ? len - total - off : off;
+      const at = (dd) => pts[U.clamp(Math.round(dd), 0, pts.length - 1)];
+      ctx.textBaseline = 'alphabetic';
+      if (ctx.letterSpacing !== undefined) ctx.letterSpacing = '0px';
+      const paint = (how, ox, oy) => {
+        let acc = 0;
+        for (let k = 0; k < chars.length; k++) {
+          const w = cw[k];
+          let mid = start + acc + w / 2;
+          acc += w;
+          if (t.onPath.closed) mid = ((mid % len) + len) % len;
+          if (mid < 0 || mid > len || !chars[k].trim()) continue;
+          const q = at(mid), a0 = at(mid - 3), a1 = at(mid + 3), ang = Math.atan2(a1.y - a0.y, a1.x - a0.x);
+          ctx.save();
+          ctx.translate(q.x + dx + ox, q.y + dy + oy);
+          ctx.rotate(ang);
+          if (how === 'fill') ctx.fillText(chars[k], -(w - (t.spacing || 0)) / 2, -(t.baselineShift || 0)); else ctx.strokeText(chars[k], -(w - (t.spacing || 0)) / 2, -(t.baselineShift || 0));
+          ctx.restore();
+        }
+      };
+      if (t.shadow) { ctx.save(); ctx.globalAlpha = 0.45; ctx.fillStyle = '#000'; paint('fill', t.size * 0.06, t.size * 0.08); ctx.restore(); }
+      if (t.outline > 0) { ctx.save(); ctx.lineJoin = 'round'; ctx.lineWidth = t.outline * 2; ctx.strokeStyle = t.outlineColour; paint('stroke', 0, 0); ctx.restore(); }
+      ctx.fillStyle = colour; paint('fill', 0, 0);
+    }
+    ctx.restore();
+    // the box (for picking and moving) is the path's bounds grown by the text size; t.x/t.y is its corner
+    const tw = b.w + pad0 * 2, th = b.h + pad0 * 2;
+    return { x: x - 8, y: y - 8, w: tw + 16, h: th + 16, tw, th };
+  }
+  // Is point p on this text? Text on a path is only "hit" close to its curve.
+  R.textHit = function (ctx, t, p, slack) {
+    slack = slack || 8;
+    if (t.onPath && t.onPath.nodes && t.onPath.nodes.length > 1 && ND.Paths) {
+      const dx = t.x - (t.px === undefined ? t.x : t.px), dy = t.y - (t.py === undefined ? t.y : t.py);
+      const n = ND.Paths.nearest(t.onPath, p.x - dx, p.y - dy + (t.baselineShift || 0) + t.size * 0.4);
+      return !!n && n.dist < t.size * 0.8 + slack;
+    }
+    const bb = R.drawText(ctx, t, t.x, t.y, '#000', true);
+    return p.x >= t.x - slack && p.y >= t.y - slack && p.x <= t.x + bb.tw + slack && p.y <= t.y + bb.th + slack;
+  };
   R.drawText = function (ctx, t, x, y, colour, measureOnly) {
     ctx.save();
     ctx.font = R.fontString(t);
     ctx.textBaseline = 'top';
     if (ctx.letterSpacing !== undefined) ctx.letterSpacing = (t.spacing || 0) + 'px';
-    const lines = String(t.text || '').split('\n');
+    if (t.onPath && t.onPath.nodes && t.onPath.nodes.length > 1 && ND.Paths) return drawOnPath(ctx, t, x, y, colour, measureOnly);
+    const box = t.boxWidth > 0 ? t.boxWidth : 0;
+    const rows = box ? R.wrapText(ctx, t.text, box) : String(t.text || '').split('\n').map((s) => ({ s, last: true }));
+    const lines = rows.map((r) => r.s);
     const lh = t.size * (t.lineHeight || 1.2);
     const widths = lines.map((l) => ctx.measureText(l).width);
-    const W = Math.max(10, ...widths), H = Math.max(lh, lines.length * lh);
+    const W = box || Math.max(10, ...widths), H = Math.max(lh, lines.length * lh);
     if (!measureOnly) {
       lines.forEach((line, i) => {
         const lw = widths[i], lx = t.align === 'center' ? x + (W - lw) / 2 : t.align === 'right' ? x + W - lw : x, ly = y + i * lh;
+        const justify = t.align === 'justify' && box && !rows[i].last && /\s/.test(line.trim());
         const paint = (fn) => {
           if (t.shadow) { ctx.save(); ctx.globalAlpha = 0.45; ctx.fillStyle = '#000'; fn(ctx, 'fill', t.size * 0.06, t.size * 0.08); ctx.restore(); }
           if (t.outline > 0) { ctx.save(); ctx.lineJoin = 'round'; ctx.lineWidth = t.outline * 2; ctx.strokeStyle = t.outlineColour; fn(ctx, 'stroke', 0, 0); ctx.restore(); }
           ctx.fillStyle = colour; fn(ctx, 'fill', 0, 0);
         };
-        if (t.warp === 'none' || !t.amount) {
+        if (justify) {
+          // spread the spare width evenly between the words
+          const words = line.trim().split(/\s+/), ww = words.map((wd) => ctx.measureText(wd).width), gap = (W - ww.reduce((a, b) => a + b, 0)) / (words.length - 1);
+          paint((c, how, ox, oy) => { let cxp = x; words.forEach((wd, k) => { if (how === 'fill') c.fillText(wd, cxp + ox, ly + oy); else c.strokeText(wd, cxp + ox, ly + oy); cxp += ww[k] + gap; }); });
+        } else if (t.warp === 'none' || !t.amount) {
           paint((c, how, ox, oy) => (how === 'fill' ? c.fillText(line, lx + ox, ly + oy) : c.strokeText(line, lx + ox, ly + oy)));
         } else {
           const chars = [...line], cw = chars.map((ch) => ctx.measureText(ch).width), half = cw.reduce((a, b) => a + b, 0) / 2;

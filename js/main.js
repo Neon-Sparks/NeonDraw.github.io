@@ -62,10 +62,14 @@
     if (ND.Dialogs.isOpen() || typing(e)) return;
     const d = App.doc;
     if (!d) return;
+    if (App.state.tool === 'pen' && !e.ctrlKey && !e.metaKey && ND.Pen.key(e)) { e.preventDefault(); return; }
+    if (e.altKey && !e.ctrlKey && (e.key === 'PageDown' || e.key === 'PageUp')) { e.preventDefault(); App.cycleDoc(e.key === 'PageDown' ? 1 : -1); return; }
+    if (App.state.showTimeline && !e.ctrlKey && !e.metaKey && !e.altKey && (e.key === ',' || e.key === '.')) { e.preventDefault(); ND.Timeline.step(e.key === ',' ? -1 : 1); return; }
     const k = e.key.toLowerCase(), ctrl = e.ctrlKey || e.metaKey, V = ND.View, M = ND.Menus;
     const run = (fn) => { e.preventDefault(); fn(); };
     if (ctrl) {
       if (k === 'z' && !e.shiftKey) return run(() => { if (!V.cancelPending()) d.history.undo(); });
+      if (k === 'y' && e.altKey) return run(() => App.toggleProof(e.shiftKey ? 'gamutWarn' : 'proofView'));
       if ((k === 'z' && e.shiftKey) || k === 'y') return run(() => d.history.redo());
       if (k === 'a') return run(() => M.menus().Select[0].run());
       if (k === 'd' && !e.shiftKey) return run(() => d.changeSelection('Deselect', null));
@@ -78,6 +82,7 @@
       if (k === 'o') return run(() => ND.Files.open());
       if (k === 'k' || (k === 'p' && e.shiftKey)) return run(() => ND.Command.open());
       if (k === 'r' && e.altKey) return run(() => ND.SelectMask.open());
+      if (k === 'w' && e.altKey) return run(() => App.closeDoc());
       if (k === 'n' && e.shiftKey) return run(() => d.addLayer());
       if (k === 'n') return run(() => ND.Dialogs.newDoc());
       if (k === 'c') return run(() => App.copy(e.shiftKey));
@@ -176,8 +181,9 @@
   function dockResizer(handle, dock) {
     handle.addEventListener('pointerdown', (e) => {
       handle.setPointerCapture(e.pointerId);
-      const sx = e.clientX, w0 = dock.offsetWidth;
-      const mv = (ev) => { const w = U.clamp(w0 - (ev.clientX - sx), 240, 560); dock.style.width = w + 'px'; App.state.dockWidth = w; ND.View.request(); };
+      // in two-column mode the drag sizes both columns together
+      const sx = e.clientX, w0 = dock.offsetWidth, cols = dock.classList.contains('two') ? 2 : 1;
+      const mv = (ev) => { const w = U.clamp(w0 - (ev.clientX - sx), 240 * cols, 560 * cols); dock.style.width = w + 'px'; App.state.dockWidth = Math.round(w / cols); ND.View.request(); };
       const up = () => { handle.removeEventListener('pointermove', mv); handle.removeEventListener('pointerup', up); App.savePrefsSoon(); };
       handle.addEventListener('pointermove', mv); handle.addEventListener('pointerup', up);
     });
@@ -249,11 +255,14 @@
     const dock = $('nd-dock');
     dock.style.width = (App.state.dockWidth || 300) + 'px';
     dockResizer($('nd-dock-resize'), dock);
+
     ND.ColourPanel.build($('nd-dock-scroll'));
     ND.BrushPanel.build($('nd-dock-scroll'));
     ND.AdjustPanel.build($('nd-dock-scroll'));
     App.on('adjust', () => { const el = document.querySelector('.nd-props'); if (el && el.parentNode) { const sec = el.closest('.nd-section'); if (sec) { sec.classList.remove('collapsed'); App.state.collapsed.properties = false; sec.scrollIntoView({ behavior: 'smooth', block: 'start' }); } } });
     ND.LayersPanel.build($('nd-dock-layers'));
+    // one or two columns of panels, rearranged by dragging their title bars
+    ND.Dock.init(dock);
     const vp = $('nd-viewport');
     ND.View.init(vp);
     buildTextEditor(vp);
@@ -317,19 +326,24 @@
       const handles = ND.Files.handlesFromDrop(e.dataTransfer), shift = e.shiftKey;
       files.forEach(async (f, i) => {
         const n = f.name.toLowerCase();
-        if (n.endsWith('.ndraw') || n.endsWith('.ora') || n.endsWith('.psd') || n.endsWith('.psb') || n.endsWith('.pigment') || !App.doc || (i === 0 && shift)) App.openFile(f, handles[i] ? await handles[i] : null);
+        if (n.endsWith('.ndraw') || n.endsWith('.ora') || n.endsWith('.kra') || n.endsWith('.tif') || n.endsWith('.tiff') || n.endsWith('.psd') || n.endsWith('.psb') || n.endsWith('.pigment') || !App.doc || (i === 0 && shift)) App.openFile(f, handles[i] ? await handles[i] : null);
         else App.importLayer(f);
       });
     });
 
+    // a printer profile loaded in an earlier session
+    ND.Store.idbGet('proof-profile').then((p) => { if (p && p.bytes) { try { ND.Colour.setProfile(p.bytes, p.name); ND.Colour.proofBytes = p.bytes; } catch (e) { /* ignore a bad profile */ } } });
     // restore the last session or start fresh
     const saved = await ND.Store.loadAutosave();
     let restored = false;
     if (saved) {
       try {
-        const doc = await ND.Store.restore(saved);
-        doc.fileHandle = (await ND.Store.idbGet('autosave-handle')) || null;
-        App.setDoc(doc); App.unsaved = false; restored = true; ND.Dialogs.recovered(doc);
+        const all = await ND.Store.restoreAll(saved);
+        if (all.docs.length) {
+          all.docs.forEach((d) => { App.docs.push(d); d._fileDirty = false; d._unsaved = false; d._autoRec = null; });
+          App.showDoc(all.docs[all.active]);
+          restored = true; ND.Dialogs.recovered(App.doc, all.docs.length);
+        }
       } catch (e) { console.warn('autosave unreadable', e); }
     }
     if (!restored) { App.newDocument(1920, 1080, '#ffffff', 'Untitled'); ND.Dialogs.newDoc(); }

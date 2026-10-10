@@ -1,5 +1,75 @@
 # Changelog
 
+## 2.7.0 — tabs, smart objects, print colours, animation extras, more file types
+
+- **Several documents at once.** Every new or opened file gets a tab at the top. Click to switch (each keeps its own zoom and position), double-click to rename, × or middle-click to close, drag to reorder, + for a new one. File ▸ Close document (Ctrl+Alt+W), Next / Previous document (Alt+PgDn / Alt+PgUp). Autosave keeps all open tabs.
+- **Smart objects.** Layer ▸ Convert to smart object, or File ▸ Place image as smart object. Transform (scale, rotate, warp, distort) as often as you like — it is always redrawn from the original, so it never gets blurry. Whole-image scale, crop, rotate, flip and canvas size do the same. Double-click it (or Layer ▸ Edit smart object contents) to open the original in its own tab; Ctrl+S or closing that tab updates the layer. Filters on a smart object become editable filter layers. Painting on it, or Layer ▸ Rasterize, turns it into a normal layer (undoable). Saved in projects with its contents.
+- **Print colours.** View ▸ Print preview (CMYK proof, Ctrl+Alt+Y) shows how the picture will look printed; Gamut warning (Ctrl+Alt+Shift+Y) greys out colours the press can't reach. Load your printer's or print shop's .icc profile (View ▸ Load printer profile) — it's remembered — or use the built-in approximate coated-press profile. File ▸ Export CMYK TIFF (for print) separates with the same profile.
+  - Colour profiles: TIFFs with Adobe RGB / ProPhoto / other RGB profiles are converted to sRGB when opened; exported PNG, JPEG and TIFF files are tagged as sRGB so other apps show the right colours.
+  - The picture is still edited at 8 bits per channel in sRGB (see the notes in the README).
+- **Animation extras.**
+  - **Motion (tweening):** the timeline's Motion button shows Move X / Y, Scale, Rotate and Opacity for the selected layer on this frame. Change a value to set a motion key (orange diamond); frames in between move and fade smoothly (ease in/out or linear). Works on still layers too.
+  - **Sound track:** Sound… adds an audio file that plays with the animation, can start later (Starts at), and goes into WebM video export. Saved in the project.
+  - **Per-layer onion skin:** the ◐ button on each layer row cycles "when active / always / never"; right-click it for that layer's before/after counts, strength and colours.
+- **More file types.**
+  - **TIFF**: open (8 / 16-bit, RGB, grey, palette, CMYK, uncompressed / LZW / Deflate / PackBits, strips or tiles) and save (RGBA with Deflate, or CMYK for print).
+  - **PDF**: File ▸ Export PDF… at 72–600 dpi, JPEG or lossless, optionally one page per animation frame.
+  - **Krita .kra**: open and save, with layers, groups, blend modes, opacity, visibility, locks and layer masks.
+  - **Photoshop .psd export** now keeps **text layers editable** (text, font, size, colour, alignment) and **adjustment layers editable** (Brightness/Contrast, Levels, Curves, Hue/Saturation, Colour Balance, Exposure, Invert, Threshold, Posterize, Solid Colour fill), including their masks. Kinds Photoshop has no equivalent for are listed when you export.
+- **Smoothing** now catches up with the pen as you slow down or hold still, and simply stops where the line is when you lift the pen (no straight line to the pen).
+- **Perspective guides:** "Show perspective guides" now really hides them even while the Edit perspective tool is active (it switches back to the brush), and picking the edit tool shows them again.
+
+## 2.6.1 — fixes
+
+- **Colourise line art fills only the areas you scribble in.** Before, an area without a scribble took the colour of its neighbour, so one scribble could fill the whole picture. Now each scribble fills its own area up to the lines (and just under them, so there are no white halos) and never crosses a line; everything else stays empty. A scribble that slips over a line no longer spills into the next area.
+  - If the layer you start from has no lines on it (for example an empty layer was selected), all visible layers are used as the line art. The new **Lines** button on the Colourise bar switches between "this layer" and "all layers".
+- **Smoothing is much stronger and goes to 100%.** It now works like a pulled string: the line follows the pen at a distance and eases after it, measured on screen, so it feels the same on fast and slow computers and at any zoom. A faint dashed line shows the string while you draw; the stroke still ends exactly where you lift the pen.
+- **View ▸ Show perspective guides** now adds a 2-point perspective when the picture has none (before, it silently did nothing), and its tick only shows when there are guides to show.
+- **Rulers are on by default.**
+- **Predict pen movement is off by default** (View menu to turn it on).
+- Existing settings get the new ruler and pen-prediction defaults once.
+
+## 2.6.0 — pen & vectors, colourise, animation, AI enlarge
+
+- **Pen tool (P) and paths.** Click to place points, drag to make curves, click the first point to close, Enter to finish.
+  - Edit by dragging points and handles. Alt+click a point switches corner/smooth, click a segment to add a point, Ctrl+drag moves the whole path, Backspace deletes a point.
+  - Turn a path into a **selection**, **fill** it, **stroke** it with the current brush (with a pen-like pressure taper), or make a **vector shape layer**.
+  - New **Paths** tab next to Layers. Paths are saved in the project.
+  - The colour sampler shortcut is now **I**.
+- **Vector shape layers** stay editable: change points, fill colour, stroke colour and width any time. Painting pixels on one turns it into a normal layer (undo brings the vector back).
+- **Paint-like colour mixing.** Mixer, watercolour and bristle brushes mix like real pigment (blue + yellow = green). A "Colour mixing" setting switches back to plain RGB.
+  - **Wet-in-wet watercolour:** strokes made while earlier ones are still wet bleed into them. Set how long paint stays wet with "Stays wet".
+  - The Colour panel shows a **Paint mix** row from foreground to background colour.
+- **Colourise line art (lazy brush).** Layer ▸ Colourise line art adds a Colour hints layer and a Flats layer. Scribble a little colour inside each area and the flats fill in up to your lines, under them (no white halos), closing small gaps. Updates after every scribble; white scribbles mean "leave empty". Done keeps the flats as an ordinary layer.
+- **Smart filters.** Filters can stay editable as a filter layer clipped to the layer below ("Keep editable" in the filter window, or Filter ▸ New filter layer).
+- **Text.** Drag sideways with the Text tool for a **paragraph box** that wraps (left, centre, right or justify). Click on a path to type **along the path**, with start position and lift sliders.
+- **Animation.** View ▸ Animation timeline.
+  - Draw on any frame; a drawing holds until the next one. Painting on an empty frame starts a new drawing (or copies the last one — your choice).
+  - Onion skins (earlier drawings red, later ones green), play / loop, frames per second, length, drag drawings to other frames, , and . step frames.
+  - File ▸ Export animation: **GIF**, **video (WebM)** or **PNG frames** (.zip). Animations are saved in .ndraw projects.
+- **AI enlarge.** Image ▸ Enlarge with AI makes the picture 2× (fast, 8 MB model) or 4× (for photos, 53 MB) bigger with real detail. Both models are Apache 2.0. Works in tiles with progress and Cancel; one undo puts it back.
+- **Faster.**
+  - Special blend modes (Linear Burn, Vivid Light, Pin Light, Divide…) are blended on the graphics card when WebGL2 is available.
+  - Filter previews run in a background worker so sliders stay smooth on big pictures, and Apply reuses the preview instead of working it out again.
+  - Predicted pen points (Chrome): a thin preview line closes the gap between the pen and the stroke. Toggle in View.
+- Fixes: path edits now appear in undo; text on a path is only picked up close to its curve; the timeline no longer breaks start-up when left open.
+
+## 2.5.4 — drag panels between columns
+
+- **Rearrange the right-hand panels by dragging their title bars.**
+  - Move Colour, Brush presets, Brush settings, Adjustments or Properties up and down a column, or across to the other column. A blue line shows where the panel will land, and long columns scroll as you drag near their top or bottom.
+  - In two-column mode the **Layers** panel has a grip (⋮⋮) in its tab bar: drag it to either column and it sits at the bottom there.
+  - A plain click on a title still collapses or expands the panel.
+  - An empty column shows "Drag panels here".
+  - Your arrangement is remembered. View ▸ Right panels ▸ **Reset panel arrangement** restores the default.
+- With one column, panels can be reordered the same way.
+
+## 2.5.3 — right-hand panels in two columns
+
+- **View ▸ Right panels ▸ 2 columns** puts Colour, Brush presets and Brush settings in one column and Adjustments, Properties and Layers in the other. The Layers panel gets more height and there's far less scrolling.
+- Dragging the panel edge resizes both columns together. The choice is remembered.
+- On windows narrower than 1000 px the panels go back to one column automatically and return to two when there's room.
+
 ## 2.5.2 — ISNet fix
 
 - **Fixed: ISNet stopped with "ceil_mode … not yet implemented in the WebGPU MaxPool kernel".** One of ISNet's layers (pooling with "ceil mode") isn't supported by the graphics-card (WebGPU) engine yet, so ISNet now always runs on the CPU, which supports it. Expect about 10–40 seconds per picture; the model card says so.

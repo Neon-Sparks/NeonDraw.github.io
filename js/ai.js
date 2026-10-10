@@ -33,10 +33,24 @@
       licenceNote: 'Non-commercial use only: images you process with it must not be sold or used commercially (BRIA offers paid licences).',
       prep: { w: 1024, h: 1024, mean: 0.5, std: 1 }, post: 'minmax',
     },
+    // upscalers (Swin2SR by Conde et al., Apache 2.0 — ONNX conversions by Xenova)
+    sr2: {
+      id: 'sr2', kind: 'upscale', scale: 2, name: 'Swin2SR ×2', title: 'Fast 2× enlarge',
+      best: 'Doubles the size with sharp, clean detail — drawings, graphics and good-quality photos',
+      url: HF + 'Xenova/swin2SR-lightweight-x2-64/resolve/main/onnx/model.onnx', size: 8078888,
+      licence: 'Apache 2.0', commercial: true, licenceNote: 'Free to use on any image, including commercial work.',
+    },
+    sr4: {
+      id: 'sr4', kind: 'upscale', scale: 4, name: 'Swin2SR ×4 photo', title: '4× enlarge for real photos',
+      best: 'Makes photos four times bigger and cleans up blur, noise and JPEG blocks (slower)',
+      url: HF + 'Xenova/swin2SR-realworld-sr-x4-64-bsrgan-psnr/resolve/main/onnx/model.onnx', size: 52772645,
+      licence: 'Apache 2.0', commercial: true, licenceNote: 'Free to use on any image, including commercial work.',
+    },
   };
   const ORDER = ['isnet', 'modnet', 'rmbg'];
+  const UPSCALERS = ['sr2', 'sr4'];
 
-  const AI = { MODELS, ORDER, downloads: {} };
+  const AI = { MODELS, ORDER, UPSCALERS, downloads: {} };
 
   // Models that must run on the CPU: known ones, plus any that failed on the graphics card here before.
   const CPU_KEY = 'nd-ai-cpu-models';
@@ -60,7 +74,7 @@
   };
   AI.status = async function () {
     const out = {};
-    for (const id of ORDER) out[id] = { downloaded: await AI.isDownloaded(id), downloading: !!AI.downloads[id] };
+    for (const id of ORDER.concat(UPSCALERS)) out[id] = { downloaded: await AI.isDownloaded(id), downloading: !!AI.downloads[id] };
     return out;
   };
   AI.storage = async function () {
@@ -271,6 +285,93 @@
     if (L && L.model === id && L.src === src && L.stamp === stamp) return L.out;
     const out = await AI.segment(id, src, status);
     AI.lastResult.stamp = stamp;
+    return out;
+  };
+
+  /* ---------- AI upscaling ---------- */
+  // Run one tile, falling back to the CPU if the graphics card fails or returns a blank result.
+  async function runTile(id, data, dims, status, checkBlank) {
+    const copy = AI.provider === 'webgpu' ? data.slice() : null;
+    let res;
+    try {
+      res = await AI.call({ type: 'run', data, dims }, [data.buffer]);
+    } catch (e) {
+      if (!copy) throw e;
+      console.warn('AI: ' + MODELS[id].name + ' failed on WebGPU, using the CPU instead —', e.message);
+      AI.markCpuOnly(id); resetWorker(); await load(id, status);
+      return AI.call({ type: 'run', data: copy, dims }, [copy.buffer]);
+    }
+    if (copy && checkBlank && !usable(res.data)) {
+      AI.noGpu = true; resetWorker(); await load(id, status);
+      res = await AI.call({ type: 'run', data: copy, dims }, [copy.buffer]);
+    }
+    return res;
+  }
+  AI.MAX_UPSCALE_PIXELS = 40e6;
+  AI.TILE = 96; AI.TILE_OVERLAP = 8;
+  // Tile layout along one side: tile starts plus the part of the output each tile owns.
+  AI.tiles = function (L, T, ov) {
+    const step = T - 2 * ov, starts = [];
+    for (let p = 0; ; p += step) { if (p + T >= L) { starts.push(Math.max(0, L - T)); break; } starts.push(p); }
+    const list = [...new Set(starts)];
+    return list.map((p, i) => ({ p, a: i === 0 ? 0 : Math.round((p + list[i - 1] + T) / 2), b: i === list.length - 1 ? L : Math.round((list[i + 1] + p + T) / 2) }));
+  };
+  /* Enlarge `src` (a canvas) with an upscaler model. Works in overlapping tiles so any size fits in memory.
+   * status(text) reports progress; isCancelled() can stop it. Returns a new canvas scale× bigger. */
+  AI.upscale = async function (id, src, status, isCancelled) {
+    status = status || (() => {});
+    const M = MODELS[id], s = M.scale, T = AI.TILE, ov = AI.TILE_OVERLAP;
+    const W = src.width, H = src.height;
+    if (W * H * s * s > AI.MAX_UPSCALE_PIXELS) throw new Error('the result would be ' + W * s + ' × ' + H * s + ' — too big for the browser. Crop or shrink the picture first (the limit is about 40 megapixels)');
+    await load(id, status);
+    // the model sees the picture over white, with the edges stretched out to fill a whole tile
+    const PW = Math.max(W, T), PH = Math.max(H, T), pad = U.canvas(PW, PH), px = U.ctx(pad);
+    px.fillStyle = '#fff'; px.fillRect(0, 0, PW, PH); px.drawImage(src, 0, 0);
+    if (PW > W) px.drawImage(pad, W - 1, 0, 1, PH, W, 0, PW - W, PH);
+    if (PH > H) px.drawImage(pad, 0, H - 1, PW, 1, 0, H, PW, PH - H);
+    const pd = px.getImageData(0, 0, PW, PH).data, sd = U.ctx(src).getImageData(0, 0, W, H).data;
+    let transparent = false;
+    for (let i = 3; i < sd.length; i += 4) if (sd[i] < 255) { transparent = true; break; }
+    const xs = AI.tiles(PW, T, ov), ys = AI.tiles(PH, T, ov), OW = W * s, OH = H * s, ST = T * s, plane = ST * ST;
+    const out = U.canvas(OW, OH), ox = U.ctx(out), img = ox.createImageData(OW, OH), o = img.data;
+    const total = xs.length * ys.length, t0 = performance.now();
+    let n = 0, checked = false;
+    for (const ty of ys) {
+      for (const tx of xs) {
+        if (isCancelled && isCancelled()) throw new Error('cancelled');
+        const data = new Float32Array(3 * T * T);
+        let mn = 1, mx = 0;
+        for (let y = 0; y < T; y++) {
+          for (let x = 0; x < T; x++) {
+            const i = ((ty.p + y) * PW + tx.p + x) * 4, j = y * T + x;
+            data[j] = pd[i] / 255; data[T * T + j] = pd[i + 1] / 255; data[2 * T * T + j] = pd[i + 2] / 255;
+            if (data[j] < mn) mn = data[j]; if (data[j] > mx) mx = data[j];
+          }
+        }
+        // only judge "blank GPU output" on a tile that actually has detail
+        const check = !checked && mx - mn > 0.05;
+        if (check) checked = true;
+        const res = await runTile(id, data, [1, 3, T, T], status, check);
+        const r = res.data, y0 = ty.a * s, y1 = Math.min(ty.b, H) * s, x0 = tx.a * s, x1 = Math.min(tx.b, W) * s;
+        for (let Y = y0; Y < y1; Y++) {
+          const ry = (Y - ty.p * s) * ST;
+          for (let X = x0; X < x1; X++) {
+            const k = ry + X - tx.p * s, q = (Y * OW + X) * 4;
+            o[q] = r[k] * 255 + 0.5; o[q + 1] = r[plane + k] * 255 + 0.5; o[q + 2] = r[2 * plane + k] * 255 + 0.5; o[q + 3] = 255;
+          }
+        }
+        n++;
+        const left = ((performance.now() - t0) / n) * (total - n) / 1000;
+        status('Enlarging ' + s + '× — part ' + n + ' of ' + total + (n > 1 ? ' · about ' + (left > 90 ? Math.round(left / 60) + ' min' : Math.max(1, Math.round(left)) + ' s') + ' left' : '') + (AI.provider === 'webgpu' ? ' (graphics card)' : ' (CPU)'));
+      }
+    }
+    ox.putImageData(img, 0, 0);
+    if (transparent) {
+      // transparency: enlarge the alpha smoothly and apply it
+      const a = U.canvas(OW, OH), ax = U.ctx(a);
+      ax.imageSmoothingEnabled = true; ax.imageSmoothingQuality = 'high'; ax.drawImage(src, 0, 0, OW, OH);
+      ox.globalCompositeOperation = 'destination-in'; ox.drawImage(a, 0, 0); ox.globalCompositeOperation = 'source-over';
+    }
     return out;
   };
 

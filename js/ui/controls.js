@@ -120,6 +120,7 @@
     const st = ND.App.state;
     const head = h('div.nd-sec-head', h('span.nd-caret', '▾'), h('span', title), extra || null);
     const el = h('div.nd-section', head, body);
+    el.dataset.sec = id;
     const apply = () => el.classList.toggle('collapsed', !!st.collapsed[id]);
     head.addEventListener('click', (e) => { if (e.target.closest('button,input,select')) return; st.collapsed[id] = !st.collapsed[id]; apply(); ND.App.savePrefsSoon(); });
     apply();

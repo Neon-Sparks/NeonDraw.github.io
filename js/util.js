@@ -44,6 +44,11 @@ window.ND = window.ND || {};
     const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
     return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
   };
+  U.intersect = function (a, b) {
+    if (!a || !b) return null;
+    const x0 = Math.max(a.x, b.x), y0 = Math.max(a.y, b.y), x1 = Math.min(a.x + a.w, b.x + b.w), y1 = Math.min(a.y + a.h, b.y + b.h);
+    return x1 > x0 && y1 > y0 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
+  };
   U.clipRect = function (r, w, h) {
     if (!r) return null;
     const x0 = Math.max(0, Math.floor(r.x)), y0 = Math.max(0, Math.floor(r.y));

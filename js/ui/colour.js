@@ -48,7 +48,8 @@
     const palBar = h('div.nd-row.tight', palSel,
       C.iconButton('plus', 'Add the current colour to this palette', () => addToPalette()),
       C.iconButton('palette', 'Palette menu (new / import / export)', (e) => paletteMenu(e.currentTarget)));
-    const body = h('div.nd-colour-panel', h('div.nd-row.space', modeSeg), pickerBox, swRow, h('div.nd-mini-title', 'Recent'), recent, h('div.nd-mini-title', 'Palette'), palBar, palGrid);
+    const mixRow = h('div.nd-mixrow');
+    const body = h('div.nd-colour-panel', h('div.nd-row.space', modeSeg), pickerBox, swRow, h('div.nd-mini-title', 'Paint mix (foreground → background)'), mixRow, h('div.nd-mini-title', 'Recent'), recent, h('div.nd-mini-title', 'Palette'), palBar, palGrid);
     root.appendChild(C.section('colour', 'Colour', body));
 
     /* ----- pickers ----- */
@@ -225,6 +226,15 @@
       if (document.activeElement !== hex) hex.value = s.fg;
       native.refresh();
     }
+    // pigment mixes between the foreground and background colours, like mixing paint on a palette
+    function renderMix() {
+      U.clear(mixRow);
+      ND.Pigment.ramp(App.state.fg, App.state.bg, 9).forEach((c, i) => {
+        const b = h('button.nd-swatch', { title: c + (i === 0 ? ' (foreground)' : i === 8 ? ' (background)' : ' — paint mix, click to use') , style: { background: c } });
+        b.addEventListener('click', () => { internal = false; App.setColour(c, 'fg'); App.pushRecent(c); });
+        mixRow.appendChild(b);
+      });
+    }
     function renderRecent() {
       U.clear(recent);
       App.state.recent.forEach((c) => {
@@ -319,8 +329,10 @@
       if (!internal) { const n = U.rgbToHsv(...U.hexToRgb(App.state.fg)); if (n[1] > 0.001 && n[2] > 0.001) hsv = n; else hsv = [hsv[0], n[1], n[2]]; draw(); }
       else if (mode === 'sliders') draw();
       refreshSwatches();
+      renderMixSoon();
     });
+    const renderMixSoon = U.debounce(renderMix, 120);
     App.on('recent', renderRecent);
-    renderPicker(); refreshSwatches(); renderRecent(); renderPalette();
+    renderPicker(); refreshSwatches(); renderRecent(); renderPalette(); renderMix();
   }
 })();

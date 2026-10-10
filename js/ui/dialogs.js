@@ -150,6 +150,21 @@
     ]);
   };
 
+  /* ---------------- PDF export ---------------- */
+  D.pdf = function () {
+    const d = App.doc, s = App.state;
+    let dpi = s.pdfDpi || 300, q = 'jpeg', frames = false;
+    const size = h('div.nd-hint');
+    const upd = () => { size.textContent = 'Page size: ' + ((d.width / dpi) * 25.4).toFixed(0) + ' × ' + ((d.height / dpi) * 25.4).toFixed(0) + ' mm (' + (d.width / dpi).toFixed(2) + ' × ' + (d.height / dpi).toFixed(2) + ' in)'; };
+    const body = h('div.nd-col',
+      C.select('Resolution', [[72, '72 dpi (screen)'], [150, '150 dpi'], [300, '300 dpi (print)'], [600, '600 dpi']], () => dpi, (v) => { dpi = +v; App.set('pdfDpi', dpi); upd(); }),
+      C.segmented([['jpeg', 'Smaller (JPEG 92%)'], ['lossless', 'Lossless']], () => q, (v) => { q = v; }),
+      ND.Anim && ND.Anim.isAnimated(d) ? C.check('Every animation frame as its own page', () => frames, (v) => { frames = v; }) : null,
+      size);
+    upd();
+    D.modal('Export PDF', body, [{ label: 'Cancel' }, { label: 'Export', primary: true, action: () => { App.exportPDF({ dpi, jpeg: q === 'jpeg' ? 0.92 : 0, frames }); } }]);
+  };
+
   /* ---------------- filter with live preview ---------------- */
   D.filter = function (id) {
     const d = App.doc, f = ND.Filters.byId(id);
@@ -158,11 +173,23 @@
     const S = d.surface(), L = { canvas: S.canvas }, original = U.clone(S.canvas), vals = {};
     const touched = () => { if (S.kind !== 'pixels') ND.DocMask.markMask(S.canvas); };
     f.params.forEach((p) => { vals[p.key] = App.lastFilter && App.lastFilter.id === id ? App.lastFilter.params[p.key] : p.def; });
-    let preview = true;
-    const restore = () => { const x = U.ctx(L.canvas); x.clearRect(0, 0, d.width, d.height); x.drawImage(original, 0, 0); touched(); d.invalidateAll(); };
-    const run = U.debounce(() => {
-      if (!preview) { restore(); return; }
-      const out = ND.Filters.run(id, original, vals, { fg: App.state.fg, bg: App.state.bg }), x = U.ctx(L.canvas);
+    let preview = true, closed = false, working = false, again = false, lastOut = null, lastKey = '';
+    const restore = () => { closed = true; const x = U.ctx(L.canvas); x.clearRect(0, 0, d.width, d.height); x.drawImage(original, 0, 0); touched(); d.invalidateAll(); };
+    const env = { fg: App.state.fg, bg: App.state.bg };
+    // previews run in a background worker when possible; a new request waits for the one in progress
+    const go = async () => {
+      if (closed) return;
+      if (!preview) { const x = U.ctx(L.canvas); x.clearRect(0, 0, d.width, d.height); x.drawImage(original, 0, 0); touched(); d.invalidateAll(); ND.View.request(); return; }
+      if (working) { again = true; return; }
+      working = true;
+      const key = JSON.stringify(vals);
+      try {
+        const out = await ND.Filters.runAsync(id, original, vals, env, { cache: true });
+        if (!closed && preview) { lastKey = key; lastOut = d.selectionMask ? U.clone(out) : out; show(out); }
+      } finally { working = false; if (again && !closed) { again = false; go(); } }
+    };
+    const show = (out) => {
+      const x = U.ctx(L.canvas);
       x.clearRect(0, 0, d.width, d.height);
       if (d.selectionMask) {
         const keep = U.clone(original), kx = U.ctx(keep); kx.globalCompositeOperation = 'destination-out'; kx.drawImage(d.selectionMask, 0, 0);
@@ -173,15 +200,19 @@
       touched();
       d.invalidateAll();
       ND.View.request();
-    }, d.width * d.height > 4e6 ? 350 : 120);
+    };
+    const run = U.debounce(go, ND.Filters.asyncAvailable() ? 40 : d.width * d.height > 4e6 ? 350 : 120);
     const ctrls = f.params.map((p) => p.type === 'check'
       ? C.check(p.label, () => !!vals[p.key], (v) => { vals[p.key] = v ? 1 : 0; run(); })
       : C.slider(p.label, { min: p.min, max: p.max, step: p.step, get: () => vals[p.key], set: (v) => { vals[p.key] = v; run(); }, wide: true }));
     const prev = C.check('Preview', () => preview, (v) => { preview = v; run(); });
+    // smart filter: keep the filter editable as a filter layer instead of changing the pixels
+    const canSmart = S.kind === 'pixels' && !d.selectionMask;
+    const smart = canSmart ? C.check('Keep editable (smart filter layer)', () => !!App.state.smartFilter, (v) => App.set('smartFilter', v), 'Adds a filter layer clipped to this layer instead of changing its pixels — edit or remove it any time') : null;
     const reset = C.button('Defaults', () => { f.params.forEach((p) => { vals[p.key] = p.def; }); ctrls.forEach((c) => c.refresh()); run(); }, { cls: 'sm' });
-    D.modal(f.label, h('div.nd-filter', ...ctrls, h('div.nd-row.space', prev, reset), d.selectionMask ? h('div.nd-hint', 'Applies inside the selection only.') : null), [
+    D.modal(f.label, h('div.nd-filter', ...ctrls, h('div.nd-row.space', prev, reset), smart, d.selectionMask ? h('div.nd-hint', 'Applies inside the selection only.') : null), [
       { label: 'Cancel', action: () => restore() },
-      { label: 'Apply', primary: true, action: () => { restore(); App.applyFilter(id, Object.assign({}, vals)); } },
+      { label: 'Apply', primary: true, action: () => { const ready = preview && lastKey === JSON.stringify(vals) ? lastOut : null; restore(); if (canSmart && App.state.smartFilter) App.addFilterLayer(id, Object.assign({}, vals), true); else App.applyFilter(id, Object.assign({}, vals), ready); } },
     ], { onCancel: restore, noFocus: true });
     run();
   };
@@ -226,7 +257,7 @@
     const rows = [
       ['B · E', 'Brush · toggle eraser mode (eraser remembers its own size)'], ['V U O N', 'Line · Rectangle · Ellipse · Polygon/star'], ['F · G', 'Fill · Gradient'],
       ['Y · S', 'Text · Stamp (S again opens the stamp library)'], ['R · L · Shift+L · W', 'Rect select · Lasso · Polygon lasso · Magic wand'], ['A', 'Quick select — paint over an object, the selection snaps to its edges (Alt removes)'],
-      ['T · K · C · P', 'Move · Transform · Crop · Colour sampler'], ['H · Z', 'Pan · Zoom'], ['J', 'Spot healing brush'],
+      ['T · K · C · P · I', 'Move · Transform · Crop · Pen (paths) · Colour sampler'], ['H · Z', 'Pan · Zoom'], ['J', 'Spot healing brush'],
       ['Q', 'Quick mask — paint a selection, Q again to finish'], ['\\', 'Switch between painting the layer and its mask'], ['Ctrl+R', 'Rulers (drag from a ruler to make a guide)'],
       ['Shift+Backspace', 'Content-aware fill of the selection'],
       ['[ ]', 'Brush size down / up (Shift: softness)'], ['Shift+drag', 'Resize the brush on the canvas'], ['Shift+click', 'Straight line from the last stroke'],
@@ -261,8 +292,8 @@
         h('p.nd-hint', 'Installed, it opens in its own window, works without internet, and can open .ndraw, .psd, .ora and image files directly.')];
     D.modal('Install Neon Draw', h('div', ...steps), [{ label: 'Close', primary: true }], { noFocus: true });
   };
-  D.recovered = function (doc) {
-    D.modal('Welcome back', h('p', 'Your last session (“' + doc.name + '”, ' + doc.width + ' × ' + doc.height + ') was restored from autosave.'), [
+  D.recovered = function (doc, n) {
+    D.modal('Welcome back', h('p', n > 1 ? 'Your last session was restored from autosave: ' + n + ' documents, one per tab at the top.' : 'Your last session (“' + doc.name + '”, ' + doc.width + ' × ' + doc.height + ') was restored from autosave.'), [
       { label: 'Start a new document', action: () => { setTimeout(() => D.newDoc(), 0); } },
       { label: 'Keep working', primary: true },
     ], { noFocus: true });

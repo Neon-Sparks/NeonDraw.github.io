@@ -203,6 +203,16 @@
         }
       } },
     /* fill layers: they generate content instead of adjusting what is below */
+    // Filter layer: any filter, kept editable (a "smart filter" when clipped to a layer)
+    { id: 'filter', label: 'Filter layer', icon: 'ƒ', custom: 'filter', defaults: () => ({ fid: 'blur', fp: {} }),
+      apply: (img, p, env) => {
+        const F = ND.Filters, f = F && F.byId(p.fid);
+        if (!f) return;
+        const c = U.canvas(img.width, img.height);
+        U.ctx(c).putImageData(img, 0, 0);
+        const out = F.run(p.fid, c, p.fp || {}, env);
+        img.data.set(U.ctx(out).getImageData(0, 0, img.width, img.height).data);
+      } },
     { id: 'solid', label: 'Solid Colour', icon: '■', fill: true, params: [{ key: 'color', label: 'Colour', type: 'colour', def: '#4d8fd1' }] },
     { id: 'gradientfill', label: 'Gradient Fill', icon: '◩', fill: true, custom: 'gradient', defaults: () => ({ to: 'bg', fg: '#2b1055', bg: '#feb47b', reverse: 0, type: 'linear', angle: 90, scale: 100 }) },
   ];
@@ -235,6 +245,13 @@
   }
   function pad(kind, params) {
     if (kind === 'develop' && params) return (params.clarity ? 40 : 0) || (params.sharpen ? 4 : 0);
+    if (kind === 'filter' && params) {
+      // filters that look at neighbouring pixels need a margin around each redrawn area
+      const f = ND.Filters && ND.Filters.byId(params.fid);
+      if (!f || f.cat === 'Adjust') return 0;
+      const big = Math.max(8, ...f.params.map((q) => (params.fp && params.fp[q.key] != null ? +params.fp[q.key] : q.def) || 0));
+      return Math.min(240, Math.round(big * 3 + 16));
+    }
     return 0;
   }
   // Auto tone for Develop: stretch the histogram and neutralise a colour cast.

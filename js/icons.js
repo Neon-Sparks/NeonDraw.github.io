@@ -74,6 +74,13 @@
     removebg: '<rect x="3.5" y="3.5" width="17" height="17" rx="2" stroke-dasharray="3 2"/><path d="M8 18c0-3 2-5 4-5s4 2 4 5"/><circle cx="12" cy="9" r="2.6"/>',
     download: '<path d="M12 4v11"/><path d="M7 10.5l5 5 5-5"/><path d="M5 19.5h14"/>',
     refresh: '<path d="M19.5 8A8 8 0 0 0 5 7.5"/><path d="M4.5 3.5v4h4"/><path d="M4.5 16a8 8 0 0 0 14.5.5"/><path d="M19.5 20.5v-4h-4"/>',
+    play: '<path d="M7 4.5v15l12-7.5z" fill="currentColor"/>',
+    first: '<path d="M6 5v14"/><path d="M18 5l-9 7 9 7z" fill="currentColor"/>',
+    prev: '<path d="M15 5l-7 7 7 7"/>',
+    next: '<path d="M9 5l7 7-7 7"/>',
+    film: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 5v14M17 5v14M3 9h4M3 15h4M17 9h4M17 15h4"/>',
+    pen: '<path d="M12 3l6 9-6 9-6-9z"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><path d="M12 3v7.4"/>',
+    path: '<path d="M4 18C8 4 16 20 20 6"/><rect x="2.5" y="16.5" width="3" height="3"/><rect x="18.5" y="4.5" width="3" height="3"/>',
     ruler: '<rect x="2.5" y="7.5" width="19" height="9" rx="1"/><path d="M6 7.5v3M9.5 7.5v4.5M13 7.5v3M16.5 7.5v4.5"/>',
     quickmask: '<rect x="3.5" y="4.5" width="17" height="15" rx="2" stroke-dasharray="3 2"/><circle cx="12" cy="12" r="4.5" fill="currentColor" opacity=".6"/>',
   };

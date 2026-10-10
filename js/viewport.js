@@ -149,6 +149,8 @@
       const x = display.getContext('2d');
       x.clearRect(r.x, r.y, r.w, r.h);
       x.drawImage(proj, r.x, r.y, r.w, r.h, r.x, r.y, r.w, r.h);
+      // print preview: show how the picture prints (CMYK proof) and/or mark colours the press can't reach
+      if ((App.state.proofView || App.state.gamutWarn) && ND.Colour) ND.Colour.proofRegion(x, r, App.state.proofView, App.state.gamutWarn);
     }
     return display;
   }
@@ -337,6 +339,14 @@
     if (d.effectiveLocked(d.active)) { App.toast('Layer is locked'); return false; }
     const L = d.active, before = U.clone(L.canvas);
     let base, holed = null, bb;
+    if (L.smart) {
+      // smart object: transform its placement; it is redrawn from the original (no quality loss)
+      bb = ND.SmartObj.bounds(L.smart);
+      V.xf = { L, smart: ND.SmartObj.state(L.smart), base: before, before, holed: U.canvas(1, 1), bx: bb.x, by: bb.y, bw: Math.max(1, bb.w), bh: Math.max(1, bb.h), cx: bb.x + bb.w / 2, cy: bb.y + bb.h / 2, offX: 0, offY: 0, sx: 1, sy: 1, rot: 0, mode: 'free', fromSelection: false };
+      App.emit('transform');
+      V.request();
+      return true;
+    }
     if (d.selectionMask && (bb = ND.Sel.bbox(d.selectionMask, 1))) {
       base = U.clone(L.canvas);
       const bx = U.ctx(base); bx.globalCompositeOperation = 'destination-in'; bx.drawImage(d.selectionMask, 0, 0);
@@ -352,8 +362,11 @@
     V.request();
     return true;
   };
+  const xfMatrix = (t) => new DOMMatrix().translate(t.cx + t.offX, t.cy + t.offY).rotate((t.rot * 180) / Math.PI).scale(t.sx, t.sy).translate(-t.cx, -t.cy);
+  const xfSmartState = (t) => (t.mode === 'free' ? ND.SmartObj.transformed(t.smart, xfMatrix(t)) : { m: null, mesh: t.mesh, g: t.mode === 'warp' ? 3 : 2 });
   function xfApplyPreview() {
     const t = V.xf, d = App.doc, x = U.ctx(t.L.canvas);
+    if (t.smart) { ND.SmartObj.render(t.L, Object.assign({}, xfSmartState(t))); d.invalidateAll(); V.request(); return; }
     x.save();
     x.clearRect(0, 0, d.width, d.height);
     x.imageSmoothingEnabled = true; x.imageSmoothingQuality = 'high';
@@ -372,7 +385,11 @@
   V.setTransformMode = function (mode) {
     const t = V.xf;
     if (!t || t.mode === mode) return;
-    if (mode !== 'free') {
+    if (mode !== 'free' && t.smart) {
+      // start from where the original's corners are now (or its existing warp)
+      const g = mode === 'warp' ? 3 : 2, cur = t.mode === 'free' ? ND.SmartObj.transformed(t.smart, xfMatrix(t)) : { mesh: t.mesh, g: t.mode === 'warp' ? 3 : 2 };
+      t.mesh = cur.mesh && cur.g === g ? cur.mesh.map((p) => ({ x: p.x, y: p.y })) : ND.SmartObj.meshFromCorners(ND.SmartObj.corners(t.L.smart, cur), g);
+    } else if (mode !== 'free') {
       const cs = xfCorners(t), g = mode === 'warp' ? 3 : 2, mesh = [];
       for (let j = 0; j < g; j++) for (let i = 0; i < g; i++) {
         const u = i / (g - 1), v = j / (g - 1);
@@ -403,6 +420,16 @@
     const t = V.xf, d = App.doc;
     if (!t) return;
     V.xf = null;
+    if (t.smart) {
+      const L = t.L, before = t.smart, after = ND.SmartObj.state(Object.assign({}, xfSmartState(t)));
+      const set = (st) => { ND.SmartObj.setState(L.smart, st); ND.SmartObj.render(L); d.invalidateAll(); d.emit('layers'); };
+      set(after);
+      d.history.push({ label: 'Transform Smart Object', undo: () => set(before), redo: () => set(after) });
+      App.emit('transform');
+      App.toast('Smart object transformed — still full quality');
+      V.request();
+      return;
+    }
     const beforeImg = U.ctx(t.before).getImageData(0, 0, d.width, d.height);
     d.recordRegion(t.L, beforeImg, { x: 0, y: 0, w: d.width, h: d.height }, 'Transform');
     if (t.fromSelection && t.mode === 'free') {
@@ -421,6 +448,7 @@
     const t = V.xf, d = App.doc;
     if (!t) return;
     V.xf = null;
+    if (t.smart) { ND.SmartObj.render(t.L); d.invalidateAll(); App.emit('transform'); V.request(); return; }
     const x = U.ctx(t.L.canvas);
     x.clearRect(0, 0, d.width, d.height); x.drawImage(t.before, 0, 0);
     d.invalidateAll();
@@ -524,7 +552,7 @@
   };
 
   /* ---------------- text ---------------- */
-  const TEXT_KEYS = ['text', 'font', 'size', 'bold', 'italic', 'align', 'lineHeight', 'spacing', 'warp', 'amount', 'outline', 'outlineColour', 'shadow', 'x', 'y'];
+  const TEXT_KEYS = ['text', 'font', 'size', 'bold', 'italic', 'align', 'lineHeight', 'spacing', 'warp', 'amount', 'outline', 'outlineColour', 'shadow', 'x', 'y', 'boxWidth', 'onPath', 'px', 'py', 'pathOffset', 'baselineShift'];
   V.commitText = function () {
     const t = V.text, d = App.doc, st = App.state;
     V.text = null;
@@ -571,8 +599,7 @@
     const d = App.doc;
     const hit = (L) => {
       if (!L || !L.isPixel || !L.textData || !L.visible) return false;
-      const t = L.textData, bb = ND.Render.drawText(cx, t, t.x, t.y, '#000', true);
-      return p.x >= t.x - 8 && p.y >= t.y - 8 && p.x <= t.x + bb.tw + 8 && p.y <= t.y + bb.th + 8;
+      return ND.Render.textHit(cx, L.textData, p, 8);
     };
     let L = hit(d.active) ? d.active : null;
     if (!L) L = d.allLayers().reverse().find(hit) || null;
@@ -846,14 +873,24 @@
     }
     if (tool === 'text') {
       if (V.text) {
-        const bb = ND.Render.drawText(cx, V.text, V.text.x, V.text.y, '#000', true);
-        if (p.x >= V.text.x - 10 && p.y >= V.text.y - 10 && p.x <= V.text.x + bb.tw + 10 && p.y <= V.text.y + bb.th + 10) { V.drag = { tool: 'text-move', dx: p.x - V.text.x, dy: p.y - V.text.y }; return; }
+        if (ND.Render.textHit(cx, V.text, p, 10)) { V.drag = { tool: 'text-move', dx: p.x - V.text.x, dy: p.y - V.text.y }; return; }
         V.commitText();
         return;
       }
       if (V.editTextAt(p)) return;
       if (!st.text.newLayer && !d.canPaint()) return App.blocked();
-      V.text = Object.assign({}, st.text, { x: p.x, y: p.y, text: '' });
+      // clicking on the active path starts text that follows it
+      const ap = ND.Pen ? ND.Pen.activePath() : null;
+      const hit = ap && ap.nodes.length > 1 ? ND.Paths.nearest(ap, p.x, p.y) : null;
+      if (hit && hit.dist < 12 / st.view.zoom) {
+        const b = ND.Paths.bounds(ap), pad = st.text.size * 1.2;
+        V.text = Object.assign({}, st.text, { text: '', onPath: JSON.parse(JSON.stringify(ap)), px: b.x - pad, py: b.y - pad, x: b.x - pad, y: b.y - pad, pathOffset: 0, baselineShift: 0, boxWidth: 0, warp: 'none' });
+        App.emit('textstart'); App.toast('Typing along the path');
+        V.request();
+        return;
+      }
+      V.text = Object.assign({}, st.text, { x: p.x, y: p.y, text: '', boxWidth: 0, onPath: null });
+      V.drag = { tool: 'text-box', x0: p.x };
       App.emit('textstart');
       V.request();
       return;
@@ -913,7 +950,10 @@
     const dr = V.drag;
     if (V.stroke) {
       const evs = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [];
-      for (const ev of evs.length ? evs : [e]) V.stroke.move(ND.Tools2.constrain(V.constraint, pt(ev)));
+      for (const ev of evs.length ? evs : [e]) { const q = ND.Tools2.constrain(V.constraint, pt(ev)); V.stroke.move(q); V.lastPt = q; }
+      // where the pen is heading (Chrome): drawn as a thin preview to hide input lag, never painted
+      const pr = App.state.predictPoints && !V.constraint && typeof e.getPredictedEvents === 'function' ? e.getPredictedEvents() : [];
+      V.predicted = pr.length ? pr.map((ev) => pt(ev)) : null;
       return;
     }
     if (!dr) return;
@@ -978,6 +1018,7 @@
         break;
       }
       case 'text-move': V.text.x = p.x - dr.dx; V.text.y = p.y - dr.dy; break;
+      case 'text-box': if (V.text) { const w = Math.round(p.x - dr.x0); V.text.boxWidth = w > 12 / st.view.zoom ? w : 0; } break;
       case 'stamp': {
         const dist = Math.hypot(p.x - dr.a.x, p.y - dr.a.y);
         if (dist * st.view.zoom > 6) { dr.moved = true; dr.size = Math.max(4, dist * 2); dr.rot = Math.atan2(p.y - dr.a.y, p.x - dr.a.x) + Math.PI / 2; }
@@ -1024,7 +1065,7 @@
       const label = st.eraserMode && st.tool === 'brush' ? 'Eraser' : T && T.engine ? T.label.replace(/ \(.*$/, '') : st.brushName || 'Brush Stroke';
       V.stroke.end(label);
       V.lastPoint = V.stroke.lastRaw;
-      V.stroke = null;
+      V.stroke = null; V.predicted = null;
       if (!st.eraserMode) App.pushRecent(st.fg);
       V.request();
       return;

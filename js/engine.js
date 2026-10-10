@@ -14,7 +14,7 @@
     sizeJitter: 0, opacityJitter: 0, angleJitter: 0, angleMode: 'fixed', hueJitter: 0, satJitter: 0, valJitter: 0,
     taper: 0, speedSize: 0, wetEdges: 0, bleed: 0, bristles: 24, blend: 'normal', variant: 'sketchy',
     hatchAngle: 45, cross: false, pixelPerfect: true, particle: 1, cloneAligned: false, lineWidth: 1,
-    taperOut: 0, pressurePts: null, load: 0, dryness: 0, paperResponse: -1, dualTip: null, dualSize: 0.5, dualCount: 3, splay: 0.5,
+    taperOut: 0, pressurePts: null, load: 0, dryness: 0, paperResponse: -1, mixMode: 'pigment', wetTime: 8, dualTip: null, dualSize: 0.5, dualCount: 3, splay: 0.5,
   };
   // Engines whose dabs are recorded so the end of the stroke can be tapered when the pen lifts.
   const LOGGED = { pixel: 1, airbrush: 1, watercolor: 1, mixer: 1 };
@@ -62,6 +62,7 @@
   class Stroke {
     /* env: {colour, bg, eraser (bool), paintBg} */
     constructor(doc, settings, env) {
+      if (ND.Anim && doc.anim) ND.Anim.autoKey(doc); // animated layer: painting on an empty frame makes a drawing
       this.doc = doc;
       this.s = normalise(settings);
       this.env = env;
@@ -129,6 +130,11 @@
     }
     // Airbrush: keep spraying while the pen rests.
     tick(now) {
+      // smoothing: while the pen slows down or rests, the line keeps catching up with it
+      if (this.s.stabilizer > 0 && this.rope && this.lastRaw) {
+        const pt = this.stabilise(Object.assign({}, this.lastRaw, { t: now }));
+        if (pt) { this.toLanes(pt, false); this.flush(); }
+      }
       if (this.engine !== 'airbrush' || !this.smooth) return;
       if (now - this.lastTick < 28) return;
       this.lastTick = now;
@@ -136,11 +142,6 @@
       this.flush();
     }
     end(label) {
-      // let a stabilised stroke catch up with the pen
-      if (this.lastRaw && this.smooth && this.s.stabilizer > 0) {
-        const tgt = this.lastRaw;
-        for (let i = 0; i < 12; i++) this.feed(tgt, false);
-      }
       this.flush();
       const doc = this.doc;
       if (this.direct) {
@@ -190,12 +191,33 @@
       this.lastRaw = raw;
       let pt = raw;
       if (s.stabilizer > 0) {
-        if (!this.smooth) this.smooth = { x: raw.x, y: raw.y };
-        const k = 1 - s.stabilizer * 0.92;
-        this.smooth.x += (raw.x - this.smooth.x) * k;
-        this.smooth.y += (raw.y - this.smooth.y) * k;
-        pt = { x: this.smooth.x, y: this.smooth.y, p: raw.p, tx: raw.tx, ty: raw.ty, t: raw.t };
+        pt = this.stabilise(raw);
+        if (!pt) return; // the pen is still inside the slack of the "string"
       } else this.smooth = { x: raw.x, y: raw.y };
+      this.toLanes(pt, first);
+    }
+    /* Smoothing: the line eases towards the pen over time. Moving fast, it trails behind (steady, smooth
+     * lines); as the pen slows down or rests it catches up (the view's frame ticks keep pulling it in).
+     * Lifting the pen just ends the line where it is. Time-based, so it feels the same with any mouse,
+     * pen or computer speed; the trailing distance is capped (measured on screen). 100% is very strong. */
+    stabilise(raw) {
+      const s = Math.min(1, this.s.stabilizer), z = (ND.App && ND.App.state && ND.App.state.view && ND.App.state.view.zoom) || 1;
+      const tau = 320 * Math.pow(s, 1.6), maxLag = (170 * Math.pow(s, 1.3)) / z;
+      const now = raw.t != null && raw.t > 0 ? raw.t : performance.now();
+      if (!this.rope) { this.rope = true; this.smooth = { x: raw.x, y: raw.y }; this.lastT = now; return raw; }
+      let dt = now - this.lastT;
+      if (!(dt > 0)) dt = 0;
+      if (now > this.lastT) this.lastT = now;
+      dt = Math.min(dt, 100);
+      const k = tau > 0 ? 1 - Math.exp(-dt / tau) : 1, ox = this.smooth.x, oy = this.smooth.y;
+      this.smooth.x += (raw.x - this.smooth.x) * k;
+      this.smooth.y += (raw.y - this.smooth.y) * k;
+      const dx = raw.x - this.smooth.x, dy = raw.y - this.smooth.y, d = Math.hypot(dx, dy);
+      if (d > maxLag) { this.smooth.x = raw.x - (dx / d) * maxLag; this.smooth.y = raw.y - (dy / d) * maxLag; }
+      if (Math.hypot(this.smooth.x - ox, this.smooth.y - oy) < 0.05) return null;
+      return { x: this.smooth.x, y: this.smooth.y, p: raw.p, tx: raw.tx, ty: raw.ty, t: now };
+    }
+    toLanes(pt, first) {
       for (const L of this.lanes) {
         const q = L.tf.f(pt);
         const lp = { x: q.x, y: q.y, p: pt.p, tx: pt.tx, ty: pt.ty, t: pt.t };
@@ -272,6 +294,14 @@
       v = U.clamp(v + (Math.random() - 0.5) * 2 * s.valJitter, 0, 1);
       const c = U.hsvToRgb(h, sa, v).map((q) => Math.round(q / 8) * 8);
       return U.rgbToHex(c[0], c[1], c[2]);
+    }
+
+    // Mix a working colour towards another: like paint (pigment, default) or like light (RGB).
+    mixCol(cur, to, k) {
+      if (k <= 0) return cur;
+      if (this.s.mixMode !== 'rgb' && ND.Pigment) return ND.Pigment.mixInto(cur, to, Math.min(1, k));
+      cur[0] += (to[0] - cur[0]) * k; cur[1] += (to[1] - cur[1]) * k; cur[2] += (to[2] - cur[2]) * k;
+      return cur;
     }
 
     /* ---------- dispatch ---------- */
@@ -519,10 +549,10 @@
         const cur = L.state.wc || this.rgb.slice();
         if (smp && smp.a > 0.05) {
           const k = s.bleed * 0.25 * smp.a;
-          cur[0] += (smp.r - cur[0]) * k; cur[1] += (smp.g - cur[1]) * k; cur[2] += (smp.b - cur[2]) * k;
+          this.mixCol(cur, [smp.r, smp.g, smp.b], k);
         }
         // slowly reload towards the brush colour
-        cur[0] += (this.rgb[0] - cur[0]) * 0.04; cur[1] += (this.rgb[1] - cur[1]) * 0.04; cur[2] += (this.rgb[2] - cur[2]) * 0.04;
+        this.mixCol(cur, this.rgb, 0.04);
         L.state.wc = cur;
         this.dab(L, pt, U.rgbToHex(cur[0], cur[1], cur[2]), this.wetAlpha(pt));
       } else this.dab(L, pt, null, this.wetAlpha(pt));
@@ -534,7 +564,10 @@
       const doc = this.doc, s = this.s;
       // absorbent paper lets the wash spread further and feather; hard-sized paper keeps it crisp
       const absorb = this.paper ? this.paper.absorb : 0;
-      const R = Math.max(2, s.size * 0.12 * (1 + absorb * 0.7)), pad = Math.ceil(R * 2) + 2;
+      // wet-in-wet: painting into a wash that hasn't dried yet spreads further and feathers softly
+      const wa = doc.wetArea, wetIn = !!(s.wetTime > 0 && wa && performance.now() < wa.until && U.intersect(wa.rect, this.bbox));
+      this.wetIn = wetIn;
+      const R = Math.max(2, s.size * 0.12 * (1 + absorb * 0.7) * (wetIn ? 2.2 : 1)), pad = Math.ceil(R * 2) + 2;
       const r = U.clipRect({ x: this.bbox.x - pad, y: this.bbox.y - pad, w: this.bbox.w + pad * 2, h: this.bbox.h + pad * 2 }, doc.width, doc.height);
       if (!r || !doc.stroke) return;
       const body = U.clamp(s.flow * 3.5, 0.05, 1), buf = doc.strokeBuffer, bx = U.ctx(buf);
@@ -545,7 +578,7 @@
       const tex = this.wcTex, N = ND.Textures.SIZE, str = tex ? (this.wcStr != null ? this.wcStr : s.textureStrength) : 0, sc = 1 / Math.max(0.1, this.wcScale || s.textureScale || 1);
       const noise = this.wcNoise || (this.wcNoise = U.fbm(256, 6, 3, (Math.random() * 1e6) | 0, 0.5));
       const edgeNoise = this.wcEdge || (this.wcEdge = U.fbm(256, 24, 3, (Math.random() * 1e6) | 0, 0.55));
-      const wet = s.wetEdges * (this.paper ? 1.3 - absorb * 0.7 : 1), bloom = 0.15 + s.bleed * 0.35 + absorb * 0.25;
+      const wet = s.wetEdges * (this.paper ? 1.3 - absorb * 0.7 : 1) * (wetIn ? 0.35 : 1), bloom = 0.15 + s.bleed * 0.35 + absorb * 0.25 + (wetIn ? 0.35 : 0);
       const ss = (a, b, v) => { const t = U.clamp((v - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
       for (let y = 0; y < r.h; y++) {
         for (let x = 0; x < r.w; x++) {
@@ -570,6 +603,11 @@
       doc.stroke.opacity = s.opacity;
       this.bbox = U.union(this.bbox, r);
       doc.strokeTouched(r);
+      // this wash stays wet for a while: strokes painted into it soon after blend wet-in-wet
+      if (s.wetTime > 0) {
+        const now = performance.now(), prev = doc.wetArea && now < doc.wetArea.until ? doc.wetArea.rect : null;
+        doc.wetArea = { rect: prev ? U.union(prev, r) : r, until: now + s.wetTime * 1000 };
+      }
     }
 
     /* ---------- colour mixer (paint picks up what is under it) ---------- */
@@ -585,10 +623,10 @@
       const left = s.load > 0 ? Math.max(0.05, Math.exp(-L.dist / s.load)) : 1;
       if (smp && smp.a > 0.05) {
         const k = U.clamp(s.bleed, 0, 1) * smp.a * (0.3 + 0.4 * (1 - left));
-        cur[0] += (smp.r - cur[0]) * k; cur[1] += (smp.g - cur[1]) * k; cur[2] += (smp.b - cur[2]) * k;
+        this.mixCol(cur, [smp.r, smp.g, smp.b], k);
       }
       const reload = (1 - U.clamp(s.bleed, 0, 1) * 0.8) * 0.12 * left;
-      cur[0] += (this.rgb[0] - cur[0]) * reload; cur[1] += (this.rgb[1] - cur[1]) * reload; cur[2] += (this.rgb[2] - cur[2]) * reload;
+      this.mixCol(cur, this.rgb, reload);
       L.state.mix = cur;
       // when the paint runs out the brush only smears what it picked up
       this.dab(L, pt, U.rgbToHex(cur[0], cur[1], cur[2]), Math.min(1, s.flow * this.alphaFactor(pt) * Math.max(0.15, left)));
@@ -692,11 +730,11 @@
               const k = (iy * uw + ix) * 4, a = under[k + 3] / 255;
               if (a > 0.1) {
                 const m = s.bleed * a * (0.35 + 0.4 * (1 - b.ink));
-                b.rgb[0] += (under[k] - b.rgb[0]) * m; b.rgb[1] += (under[k + 1] - b.rgb[1]) * m; b.rgb[2] += (under[k + 2] - b.rgb[2]) * m;
+                this.mixCol(b.rgb, [under[k], under[k + 1], under[k + 2]], m);
                 b.ink = Math.min(1, b.ink + a * s.bleed * 0.02);
               } else {
                 const back = 0.04 * b.ink;
-                b.rgb[0] += (this.rgb[0] * b.shade - b.rgb[0]) * back; b.rgb[1] += (this.rgb[1] * b.shade - b.rgb[1]) * back; b.rgb[2] += (this.rgb[2] * b.shade - b.rgb[2]) * back;
+                this.mixCol(b.rgb, [this.rgb[0] * b.shade, this.rgb[1] * b.shade, this.rgb[2] * b.shade], back);
               }
             }
           }

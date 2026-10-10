@@ -22,15 +22,19 @@
   }
   // Project object; `enc(canvas)` turns pixels into a string (data URL, or a reference to a stored blob).
   function project(doc, enc) {
+    const smartOut = (sm) => (sm ? { png: enc(sm.src), m: sm.m, mesh: sm.mesh, g: sm.g || 0, contents: sm.contents ? project(sm.contents, enc) : null } : null);
     return {
       app: 'pigment', version: 3, width: doc.width, height: doc.height, name: doc.name, backgroundColor: doc.backgroundColor,
-      guides: doc.guides, assistants: doc.assistants, paper: doc.paper || null,
+      guides: doc.guides, assistants: doc.assistants, paper: doc.paper || null, paths: doc.paths || [], activePath: doc.activePath || null, anim: doc.anim || null,
       layers: flatList(doc).map(({ node: n, depth }) => ({
         type: n.type, name: n.name, visible: n.visible, opacity: n.opacity, blendMode: n.blendMode, isGroup: n.isGroup, depth,
         locked: n.locked, alphaLock: n.alphaLock, clip: n.clip, collapsed: !!n.collapsed,
         png: n.isPixel ? enc(n.canvas) : '',
         mask: n.mask ? enc(n.mask) : null, maskEnabled: n.maskEnabled,
-        effects: n.effects || null, kind: n.kind || null, params: n.params || null, textData: n.textData || null,
+        effects: n.effects || null, kind: n.kind || null, params: n.params || null, textData: n.textData || null, shapeData: n.shapeData || null, colorizeData: n.colorizeData || null,
+        frames: n.isPixel && n.frames ? Object.keys(n.frames).map((k) => ({ at: +k, png: enc(n.frames[k]) })) : null,
+        smart: n.isPixel ? smartOut(n.smart) : null,
+        tween: n.tween || null, onion: n.onion || null,
       })),
     };
   }
@@ -41,7 +45,8 @@
     const list = [], obj = project(doc, (c) => { list.push(c); return '#' + (list.length - 1); });
     const urls = await Promise.all(list.map(async (c) => blobToDataURL(await U.canvasToBlob(c, 'image/png'))));
     const fix = (v) => (typeof v === 'string' && v[0] === '#' ? urls[+v.slice(1)] : v);
-    obj.layers.forEach((l) => { l.png = fix(l.png); l.mask = fix(l.mask); });
+    const fixAll = (o) => o.layers.forEach((l) => { l.png = fix(l.png); l.mask = fix(l.mask); if (l.frames) l.frames.forEach((f) => { f.png = fix(f.png); }); if (l.smart) { l.smart.png = fix(l.smart.png); if (l.smart.contents) fixAll(l.smart.contents); } });
+    fixAll(obj);
     return JSON.stringify(obj);
   }
   async function deserialize(text, blobs) {
@@ -57,6 +62,8 @@
     doc.guides = Array.isArray(s.guides) ? s.guides : [];
     doc.assistants = Array.isArray(s.assistants) ? s.assistants : [];
     doc.paper = ND.Paper ? ND.Paper.normalise(s.paper) : null;
+    doc.paths = Array.isArray(s.paths) ? s.paths : [];
+    doc.activePath = s.activePath || null;
     doc.root.children = [];
     const stack = [doc.root];
     for (const e of s.layers || []) {
@@ -70,6 +77,18 @@
         n = new ND.Layer(e.name, s.width, s.height);
         if (e.png) U.ctx(n.canvas).drawImage(await load(e.png), 0, 0);
         n.textData = e.textData || null;
+        n.shapeData = e.shapeData || null;
+        n.colorizeData = e.colorizeData || null;
+        n.tween = e.tween || null; n.onion = e.onion || null;
+        if (e.smart && e.smart.png) {
+          const im = await load(e.smart.png), src = U.canvas(im.width, im.height);
+          U.ctx(src).drawImage(im, 0, 0);
+          n.smart = { src, m: e.smart.m || [1, 0, 0, 1, 0, 0], mesh: e.smart.mesh || null, g: e.smart.g || 0, contents: e.smart.contents ? await deserialize(e.smart.contents, blobs) : null };
+        }
+        if (Array.isArray(e.frames) && e.frames.length) {
+          n.frames = {};
+          for (const f of e.frames) { const c = U.canvas(s.width, s.height); U.ctx(c).drawImage(await load(f.png), 0, 0); n.frames[f.at] = c; }
+        }
       }
       Object.assign(n, { visible: e.visible !== false, opacity: e.opacity == null ? 1 : e.opacity, blendMode: e.blendMode || 'normal', locked: !!e.locked, alphaLock: !!e.alphaLock, clip: !!e.clip, maskEnabled: e.maskEnabled !== false });
       if (e.mask) { const m = U.canvas(s.width, s.height); U.ctx(m).drawImage(await load(e.mask), 0, 0); n.mask = m; }
@@ -79,6 +98,7 @@
     }
     if (!doc.allLayers().length) doc.root.children.push(new ND.Layer('Background', s.width, s.height));
     doc.active = doc.firstLayer();
+    if (ND.Anim && s.anim) { doc.anim = ND.Anim.normalise(s.anim); ND.Anim.apply(doc); }
     doc.invalidateAll();
     return doc;
   }
@@ -110,6 +130,29 @@
       t.oncomplete = () => res(blobs.reduce((a, b) => a + b.size, 0));
       t.onerror = () => rej(t.error);
     });
+  }
+  // all open tabs: { format: 'ndraw-tabs', docs: [record + handle], active }
+  async function autosaveAll(docs, active, changed) {
+    for (const d of docs) if (!d._autoRec || changed.has(d)) d._autoRec = await autosaveRecord(d);
+    const rec = { format: 'ndraw-tabs', active, docs: docs.map((d) => Object.assign({}, d._autoRec, { handle: d.fileHandle || null })) };
+    const db = await idb();
+    return new Promise((res, rej) => {
+      const t = db.transaction('docs', 'readwrite');
+      t.objectStore('docs').put(rec, KEY);
+      t.oncomplete = () => res(true);
+      t.onerror = () => rej(t.error);
+    });
+  }
+  // Returns { docs: [Doc], active } for any autosave format (older versions saved one document).
+  async function restoreAll(saved) {
+    if (saved && saved.format === 'ndraw-tabs') {
+      const docs = [];
+      for (const r of saved.docs) { try { const d = await restore(r); d.fileHandle = r.handle || null; docs.push(d); } catch (e) { console.warn('a tab could not be restored', e); } }
+      return { docs, active: Math.min(saved.active || 0, Math.max(0, docs.length - 1)) };
+    }
+    const d = await restore(saved);
+    d.fileHandle = (await idbGet('autosave-handle')) || null;
+    return { docs: [d], active: 0 };
   }
   async function restore(saved) {
     if (saved && saved.format === 'ndraw-parts') return deserialize(saved.meta, saved.blobs);
@@ -328,10 +371,15 @@
   }
   function exportPSD(doc) {
     const W = doc.width, H = doc.height;
-    const records = []; // bottom → top
+    const records = [], lost = []; // bottom → top
     const rec = (g) => {
       for (const n of g.children) {
-        if (n.isAdjust) continue;
+        if (n.isAdjust) {
+          // adjustment layers stay editable in Photoshop when it has the same kind
+          const blk = ND.Formats ? ND.Formats.psdAdjust(n) : null;
+          if (blk) records.push({ kind: 'adjust', node: n, blk }); else lost.push(n.name);
+          continue;
+        }
         if (n.isGroup) {
           records.push({ kind: 'end', node: n });
           rec(n);
@@ -342,7 +390,14 @@
     rec(doc.root);
     // channel data per record
     for (const r of records) {
-      if (r.kind !== 'layer') { r.rect = { x: 0, y: 0, w: 0, h: 0 }; r.ch = [new Uint8Array(0), new Uint8Array(0), new Uint8Array(0), new Uint8Array(0)]; continue; }
+      if (r.kind === 'adjust' && r.node.mask) {
+        const md = U.ctx(r.node.mask).getImageData(0, 0, W, H).data, m = new Uint8Array(W * H);
+        for (let i = 0; i < W * H; i++) m[i] = md[i * 4];
+        r.mask = m;
+      }
+      if (r.kind !== 'layer') { r.rect = { x: 0, y: 0, w: 0, h: 0 }; r.ch = [new Uint8Array(0), new Uint8Array(0), new Uint8Array(0), new Uint8Array(0)]; if (r.mask) r.ch.push(r.mask); continue; }
+      // text layers keep their text, font, size and colour (Photoshop re-renders them)
+      if (r.node.textData && ND.Formats) r.blk = ND.Formats.psdText(Object.assign({}, r.node.textData));
       const px = bakedPixels(doc, r.node);
       const bb = ND.Sel.contentBBox(px) || { x: 0, y: 0, w: 0, h: 0 };
       r.rect = bb;
@@ -358,22 +413,24 @@
     for (const r of records) {
       const n = r.node, b = r.rect;
       li.i32(b.y); li.i32(b.x); li.i32(b.y + b.h); li.i32(b.x + b.w);
-      li.u16(4);
-      [-1, 0, 1, 2].forEach((id, k) => { li.i16(id); li.u32(2 + r.ch[k].length); });
+      li.u16(r.ch.length);
+      [-1, 0, 1, 2, -2].slice(0, r.ch.length).forEach((id, k) => { li.i16(id); li.u32(2 + r.ch[k].length); });
       li.str('8BIM');
       const key = r.kind === 'end' ? 'norm' : r.kind === 'group' ? (n.blendMode === 'normal' ? 'pass' : PSD_KEY[n.blendMode] || 'norm') : PSD_KEY[n.blendMode] || 'norm';
       li.str(key);
       li.u8(r.kind === 'end' ? 255 : Math.round(n.opacity * 255));
       li.u8(n.clip && r.kind !== 'end' ? 1 : 0);
-      li.u8((r.kind !== 'end' && !n.visible ? 2 : 0) | 8 | (r.kind === 'layer' ? 0 : 16));
+      li.u8((r.kind !== 'end' && !n.visible ? 2 : 0) | 8 | (r.kind === 'layer' || r.kind === 'adjust' ? 0 : 16));
       li.u8(0);
       const extra = new W8();
-      extra.u32(0); extra.u32(0);
+      if (r.mask) { extra.u32(20); extra.i32(0); extra.i32(0); extra.i32(H); extra.i32(W); extra.u8(0); extra.u8(n.maskEnabled === false ? 2 : 0); extra.u16(0); } else extra.u32(0);
+      extra.u32(0);
       const nm = r.kind === 'end' ? '</Layer group>' : n.name;
       pascal(extra, nm);
       unicodeBlock(extra, nm);
       if (r.kind === 'group') sectionBlock(extra, n.collapsed ? 2 : 1, key === 'pass' ? 'pass' : key);
       if (r.kind === 'end') sectionBlock(extra, 3, 'norm');
+      if (r.blk) { const dd = r.blk.data, len = dd.length + (dd.length & 1); extra.str('8BIM'); extra.str(r.blk.key); extra.u32(len); extra.raw(dd); if (dd.length & 1) extra.u8(0); }
       li.u32(extra.len); li.raw(extra.bytes());
     }
     for (const r of records) for (const c of r.ch) { li.u16(0); li.raw(c); }
@@ -393,7 +450,9 @@
     const d = fx.getImageData(0, 0, W, H).data;
     out.u16(0);
     for (let c = 0; c < 3; c++) { const ch = new Uint8Array(W * H); for (let i = 0, j = c; i < ch.length; i++, j += 4) ch[i] = d[j]; out.raw(ch); }
-    return new Blob(out.chunks, { type: 'image/vnd.adobe.photoshop' });
+    const blob = new Blob(out.chunks, { type: 'image/vnd.adobe.photoshop' });
+    blob.lost = lost;
+    return blob;
   }
 
   /* ---------------- preferences ---------------- */
@@ -403,5 +462,5 @@
   function getJSON(key, def) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : def; } catch (e) { return def; } }
   function setJSON(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); return true; } catch (e) { return false; } }
 
-  ND.Store = { hasLiveOnly, serialize, serializeAsync, restore, deserialize, autosave, autosaveRecord, idbGet, idbSet, loadAutosave, clearAutosave, exportORA, importORA, exportPSD, zip, unzip, prefs, savePrefs, getJSON, setJSON };
+  ND.Store = { hasLiveOnly, serialize, serializeAsync, restore, restoreAll, autosaveAll, deserialize, autosave, autosaveRecord, idbGet, idbSet, loadAutosave, clearAutosave, exportORA, importORA, exportPSD, zip, unzip, prefs, savePrefs, getJSON, setJSON };
 })();

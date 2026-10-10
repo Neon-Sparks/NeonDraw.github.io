@@ -31,7 +31,8 @@
     { id: 'move', label: 'Move layer (arrow keys nudge)', key: 'T', icon: 'move', group: 'Edit' },
     { id: 'transform', label: 'Transform (free / warp / distort)', key: 'K', icon: 'transform', group: 'Edit' },
     { id: 'crop', label: 'Crop', key: 'C', icon: 'crop', group: 'Edit' },
-    { id: 'eyedropper', label: 'Colour sampler', key: 'P', icon: 'eyedropper', group: 'Edit' },
+    { id: 'pen', label: 'Pen — paths & vector shapes (click = point, drag = curve)', key: 'P', icon: 'pen', group: 'Edit' },
+    { id: 'eyedropper', label: 'Colour sampler', key: 'I', icon: 'eyedropper', group: 'Edit' },
     { id: 'assist', label: 'Perspective & ruler assistants', key: '', icon: 'assist', group: 'Edit' },
     { id: 'pan', label: 'Pan (or hold Space)', key: 'H', icon: 'pan', group: 'View' },
     { id: 'zoom', label: 'Zoom (drag to scrub)', key: 'Z', icon: 'zoom', group: 'View' },
@@ -54,7 +55,7 @@
     fillTolerance: 32, fillContiguous: true, fillMerged: false, fillWith: 'fg', fillPattern: 'Dots', fillExpand: 1, fillPatternScale: 1, fillGap: 0,
     healSize: 40, healMerged: false, redeyeSize: 30,
     liqMode: 'push', liqSize: 120, liqStrength: 0.6,
-    assistType: 'vp', snapAssist: true, showAssist: true, snapGuides: true, rulers: false, smartSize: 30,
+    assistType: 'vp', snapAssist: true, showAssist: true, snapGuides: true, rulers: true, smartSize: 30,
     gradType: 'linear', gradTo: 'bg', gradRepeat: 'none', gradDither: true, gradReverse: false, gradOpacity: 1,
     shapeFill: true, shapeStroke: false, shapeWidth: 6, shapeRadius: 0, polySides: 5, polyStar: true, polyInner: 0.45, shapeUseBrush: false,
     lineUseBrush: true,
@@ -65,7 +66,7 @@
     grid: false, gridSize: 64, pixelGrid: true, wrap: false, showSymmetry: true, hideUI: false,
     dockWidth: 300, collapsed: {},
     touchMode: 'auto',
-    rightClick: 'palette', favBrushes: null, recentCommands: [], smartAI: false, aiModel: null, aiRemember: false, aiClean: true, toolboxMode: 'left', toolboxCols: 0, toolboxPos: null,
+    rightClick: 'palette', favBrushes: null, recentCommands: [], smartAI: false, aiModel: null, aiRemember: false, aiClean: true, toolboxMode: 'left', toolboxCols: 0, toolboxPos: null, dockCols: 1, dockLayout: null, smartFilter: false, strokePressure: true, showTimeline: false, aiUpscaler: 'sr2', predictPoints: false, prefsRev: 2, proofView: false, gamutWarn: false, pdfDpi: 300,
   });
 
   const App = {
@@ -165,15 +166,52 @@
   };
 
   /* ---------------- documents ---------------- */
-  App.setDoc = function (doc) {
+  /* Several documents can be open, one per tab (App.docs). App.doc is the one on screen.
+   * setDoc(doc) opens a document in a new tab (replacing an untouched blank start-up document);
+   * showDoc(doc) switches to an open one; closeDoc(doc) closes a tab. */
+  App.docs = [];
+  const pristine = (d) => !!d && !d.fileHandle && !d.history.stack.length && !d._fileDirty && /^Untitled$/.test(d.name) && !d.smartParent;
+  App.showDoc = function (doc) {
+    if (!doc || this.doc === doc) return;
+    if (this.doc) {
+      // finish anything half-done on the document we're leaving, and remember its view
+      if (ND.View && ND.View.commitPending) { ND.View.commitPending(); if (ND.View.text) ND.View.commitText(); }
+      this.doc.view = Object.assign({}, this.state.view);
+    }
     if (this.docUnsub) this.docUnsub();
     this.doc = doc;
     this.docUnsub = doc.on((type) => this.emit('doc', type));
     doc.wrapAround = this.state.wrap;
     this.emit('docchange');
-    this.fitView();
+    if (doc.view) this.setView(Object.assign({}, doc.view)); else this.fitView();
     this.emit('doc', 'layers');
+    this.emit('tabs');
+    this.emit('saved');
   };
+  App.setDoc = function (doc) {
+    const cur = this.doc, i = this.docs.indexOf(cur);
+    if (cur && i >= 0 && pristine(cur)) this.docs[i] = doc; else this.docs.push(doc);
+    doc._fileDirty = false; doc._unsaved = true;
+    if (cur === doc) { this.doc = null; }
+    this.showDoc(doc);
+  };
+  App.closeDoc = function (doc, force) {
+    doc = doc || this.doc;
+    const i = this.docs.indexOf(doc);
+    if (i < 0) return false;
+    const changed = !doc.smartParent && (doc._fileDirty || (!doc.fileHandle && doc.history.stack.length > 0));
+    if (changed && !force && !window.confirm('“' + doc.name + '” has changes that aren’t saved to a file. Close it anyway?')) return false;
+    if (doc.smartParent && ND.SmartObj) ND.SmartObj.closing(doc);
+    this.docs.splice(i, 1);
+    this.tabsChanged = true;
+    if (this.doc === doc) {
+      if (this.docs.length) { if (this.docUnsub) this.docUnsub(); this.docUnsub = null; this.doc = null; this.showDoc(this.docs[Math.min(i, this.docs.length - 1)]); }
+      else { this.doc = null; this.newDocument(1920, 1080, '#ffffff', 'Untitled'); }
+    }
+    this.emit('tabs');
+    return true;
+  };
+  App.cycleDoc = function (dir) { const n = this.docs.length; if (n > 1) this.showDoc(this.docs[(this.docs.indexOf(this.doc) + dir + n) % n]); };
   App.newDocument = function (w, h, bg, name, paper, paperBackground) {
     const d = new ND.Doc(w, h, bg);
     d.name = name || 'Untitled';
@@ -238,6 +276,24 @@
       } else if (n.endsWith('.ndraw') || n.endsWith('.pigment') || file.type === 'application/json') {
         this.setDoc(await ND.Store.deserialize(await file.text()));
         this.toast('Project opened');
+      } else if (n.endsWith('.kra')) {
+        const doc = await ND.Formats.readKRA(await file.arrayBuffer(), file.name);
+        this.setDoc(doc);
+        this.toast('Krita file opened · ' + doc.allLayers().length + ' layers' + (doc.importNote ? ' · ' + doc.importNote : ''), doc.importNote ? 6000 : 2000);
+      } else if (n.endsWith('.tif') || n.endsWith('.tiff')) {
+        const t = await ND.Formats.readTIFF(await file.arrayBuffer());
+        // an embedded RGB colour profile (Adobe RGB, ProPhoto…) is converted to the sRGB working space
+        let note = '';
+        if (t.icc && !t.cmyk) { try { const P = ND.Colour.parseICC(t.icc); if (!/srgb/i.test(P.name || '') && ND.Colour.convertToSRGB(t.canvas, P)) note = ' · converted from ' + (P.name || 'its colour profile') + ' to sRGB'; } catch (e) { /* unreadable profile: use as is */ } }
+        if (t.cmyk) note = ' · CMYK converted to RGB (' + ND.Colour.profileName + ')';
+        if (t.bits === 16) note += ' · 16-bit read as 8-bit';
+        const d = new ND.Doc(t.canvas.width, t.canvas.height, null);
+        d.root.children[0].name = 'Background';
+        U.ctx(d.root.children[0].canvas).drawImage(t.canvas, 0, 0);
+        d.name = file.name.replace(/\.[^.]+$/, '');
+        d.invalidateAll();
+        this.setDoc(d);
+        this.toast('TIFF opened' + note, note ? 5000 : 2000);
       } else if (n.endsWith('.ora')) {
         this.setDoc(await ND.Store.importORA(await file.arrayBuffer(), file.name));
         this.toast('OpenRaster file opened');
@@ -260,7 +316,20 @@
   // "dirty" = changed since the last save to a file (autosave to the browser is separate)
   App.markSaved = function () { this.dirty = false; this.emit('saved'); };
   App.on('doc', (t) => { if (t === 'history' && !App.dirty) { App.dirty = true; App.emit('saved'); } });
-  App.on('docchange', () => { App.dirty = false; App.emit('saved'); });
+  // "dirty" (unsaved to file) and "unsaved" (not yet autosaved) belong to each open document
+  Object.defineProperty(App, 'dirty', { configurable: true, get() { return !!(App.doc && App.doc._fileDirty); }, set(v) { if (App.doc) App.doc._fileDirty = !!v; } });
+  // smart objects
+  App.convertToSmart = function () { const m = ND.SmartObj.convert(this.doc, this.doc.active); this.toast(m || 'Converted to a smart object — transforms now keep full quality; Layer ▸ Edit smart object contents to change it'); };
+  App.editSmart = function () { if (!ND.SmartObj.edit(this.doc, this.doc.active)) this.toast('Pick a smart object layer'); };
+  App.rasterizeSmart = function () { if (ND.SmartObj.rasterize(this.doc, this.doc.active)) this.toast('Rasterized — it is an ordinary paint layer now'); else this.toast('Pick a smart object layer'); };
+  App.placeSmart = function () {
+    const inp = U.h('input', { type: 'file', accept: 'image/*' });
+    inp.addEventListener('change', async () => {
+      const f = inp.files[0]; if (!f) return;
+      try { const im = await U.blobToImage(f); ND.SmartObj.place(this.doc, im, f.name.replace(/\.[^.]+$/, '')); this.toast('Placed as a smart object — use Transform (Ctrl+T) to size it without losing quality'); } catch (e) { this.toast('Could not read that image'); }
+    });
+    inp.click();
+  };
   App.importLayer = async function (file) {
     if (!this.doc) return;
     try {
@@ -295,14 +364,56 @@
     const d = this.doc;
     let c = d.flatCopy();
     if (fmt === 'jpeg') { const j = U.canvas(c.width, c.height), x = U.ctx(j); x.fillStyle = d.backgroundColor || '#ffffff'; x.fillRect(0, 0, j.width, j.height); x.drawImage(c, 0, 0); c = j; }
-    const blob = await U.canvasToBlob(c, 'image/' + fmt, quality || 0.92);
+    let blob = await U.canvasToBlob(c, 'image/' + fmt, quality || 0.92);
     if (!blob) { this.toast('This browser cannot export ' + fmt.toUpperCase()); return; }
+    if (ND.Colour) blob = await ND.Colour.tagExport(blob, 'image/' + fmt); // marked as sRGB for other apps
     U.download(U.safeName(d.name) + '.' + (fmt === 'jpeg' ? 'jpg' : fmt), blob);
     this.toast('Exported ' + fmt.toUpperCase());
   };
   const liveNote = ' — adjustment layers can\'t be stored in this format (the merged preview includes them). Use Layer ▸ Merge visible first to keep their look.';
   App.exportORA = async function () { U.download(U.safeName(this.doc.name) + '.ora', await ND.Store.exportORA(this.doc)); this.toast('Exported OpenRaster (.ora)' + (ND.Store.hasLiveOnly(this.doc) ? liveNote : ''), ND.Store.hasLiveOnly(this.doc) ? 6000 : 1600); };
-  App.exportPSD = function () { U.download(U.safeName(this.doc.name) + '.psd', ND.Store.exportPSD(this.doc)); this.toast('Exported layered PSD' + (ND.Store.hasLiveOnly(this.doc) ? liveNote : ''), ND.Store.hasLiveOnly(this.doc) ? 6000 : 1600); };
+  App.exportPSD = function () {
+    const b = ND.Store.exportPSD(this.doc), lost = b.lost || [];
+    U.download(U.safeName(this.doc.name) + '.psd', b);
+    const texts = this.doc.allLayers().filter((l) => l.textData).length, adj = this.doc.allNodes().filter((n) => n.isAdjust).length - lost.length;
+    this.toast('Exported layered PSD' + (texts || adj ? ' — ' + [texts ? texts + ' text layer' + (texts > 1 ? 's' : '') : '', adj ? adj + ' adjustment layer' + (adj > 1 ? 's' : '') : ''].filter(Boolean).join(' and ') + ' stay editable' : '') + (lost.length ? '. Not kept (Photoshop has no equivalent here): ' + lost.join(', ') : ''), lost.length ? 7000 : 3000);
+  };
+  // more formats
+  App.exportTIFF = async function (cmyk) {
+    const d = this.doc;
+    this.toast('Saving TIFF…', 20000);
+    try {
+      let c = d.flatCopy();
+      const b = await ND.Formats.writeTIFF(c, { cmyk, icc: cmyk ? (ND.Colour.proof && ND.Colour.proofBytes) || null : ND.Colour.srgbICC(), dpi: this.state.pdfDpi || 300 });
+      U.download(U.safeName(d.name) + (cmyk ? '-cmyk' : '') + '.tif', b);
+      this.toast(cmyk ? 'Saved CMYK TIFF for print (' + ND.Colour.profileName + ')' : 'Saved TIFF');
+    } catch (e) { this.toast('Could not save TIFF: ' + e.message, 5000); }
+  };
+  App.exportKRA = async function () {
+    this.toast('Saving Krita file…', 20000);
+    try { const b = await ND.Formats.writeKRA(this.doc); U.download(U.safeName(this.doc.name) + '.kra', b); this.toast('Saved Krita file (.kra)' + (b.skipped ? ' — ' + b.skipped + ' adjustment/filter layer' + (b.skipped > 1 ? 's' : '') + ' left out (Krita stores those differently)' : ''), b.skipped ? 6000 : 2500); } catch (e) { this.toast('Could not save .kra: ' + e.message, 5000); }
+  };
+  App.exportPDF = async function (opts) {
+    const d = this.doc;
+    this.toast('Making PDF…', 30000);
+    try {
+      const pages = opts.frames && ND.Anim && ND.Anim.isAnimated(d) ? Array.from({ length: ND.Anim.state(d).length }, (_, f) => ND.Anim.renderFrame(d, f)) : [d.flatCopy()];
+      const b = await ND.Formats.writePDF(pages, { dpi: opts.dpi, jpeg: opts.jpeg, title: d.name });
+      U.download(U.safeName(d.name) + '.pdf', b);
+      this.toast('Saved PDF — ' + pages.length + ' page' + (pages.length > 1 ? 's' : '') + ', ' + (d.width / opts.dpi * 25.4).toFixed(0) + ' × ' + (d.height / opts.dpi * 25.4).toFixed(0) + ' mm at ' + opts.dpi + ' dpi');
+    } catch (e) { this.toast('Could not make PDF: ' + e.message, 5000); }
+  };
+  App.loadProofProfile = function () {
+    const inp = U.h('input', { type: 'file', accept: '.icc,.icm' });
+    inp.addEventListener('change', async () => {
+      const f = inp.files[0]; if (!f) return;
+      try { const bytes = new Uint8Array(await f.arrayBuffer()); ND.Colour.setProfile(bytes, f.name); ND.Colour.proofBytes = bytes; await ND.Store.idbSet('proof-profile', { name: f.name, bytes }); this.refreshProof(); this.toast('Printer profile: ' + ND.Colour.profileName); } catch (e) { this.toast(e.message, 5000); }
+    });
+    inp.click();
+  };
+  App.resetProofProfile = function () { ND.Colour.setProfile(null); ND.Colour.proofBytes = null; ND.Store.idbSet('proof-profile', null); this.refreshProof(); this.toast('Using the built-in press profile (approximate)'); };
+  App.refreshProof = function () { if (this.doc) { this.doc.displayDirty = { x: 0, y: 0, w: this.doc.width, h: this.doc.height }; ND.View.request(); } this.emit('proof'); };
+  App.toggleProof = function (k) { this.set(k, !this.state[k]); this.refreshProof(); if (this.state[k]) this.toast((k === 'gamutWarn' ? 'Gamut warning: grey marks colours that won’t print' : 'Print preview (CMYK proof)') + ' — ' + ND.Colour.profileName, 3500); };
   App.exportLayerPNG = async function () {
     const n = this.doc.active;
     const c = this.doc.renderNode(n);
@@ -434,11 +545,17 @@
   /* ---------------- filters ---------------- */
   App.blocked = function () { this.toast((this.doc && this.doc.paintBlocker()) || 'Nothing to paint on here'); };
   // Apply a filter to the current surface (layer pixels, or the mask while editing a mask).
-  App.applyFilter = function (id, params) {
+  // `ready`: an already-computed result (the filter dialog's preview), so it isn't worked out twice
+  App.applyFilter = function (id, params, ready) {
     const d = this.doc, f = ND.Filters.byId(id), S = d.surface();
     if (!S) return this.blocked();
     const env = { fg: this.state.fg, bg: this.state.bg };
-    const out = ND.Filters.run(id, S.canvas, params, env);
+    if (S.kind === 'pixels' && S.node.smart && !d.selectionMask) {
+      // smart object: filters stay editable (a filter layer clipped to it) instead of flattening it
+      this.addFilterLayer(id, Object.assign({}, params), true);
+      return this.toast('Smart filter added — edit or remove it any time in the Layers panel');
+    }
+    const out = ready || ND.Filters.run(id, S.canvas, params, env);
     const full = { x: 0, y: 0, w: d.width, h: d.height };
     const before = U.ctx(S.canvas).getImageData(0, 0, d.width, d.height);
     const x = U.ctx(S.canvas);
@@ -472,6 +589,17 @@
     if (kind === 'develop') Object.assign(p, {});
     d.addAdjustment(kind, p);
     this.emit('adjust');
+  };
+  // Editable filter: a filter layer above the active layer, clipped to it when it's a paint layer
+  App.addFilterLayer = function (fid, fp, clip) {
+    const d = this.doc, f = ND.Filters.byId(fid), base = d.active;
+    const A = d.addAdjustment('filter', { fid, fp: Object.assign({}, fp || {}) });
+    A.name = 'ƒ ' + f.label;
+    if (clip && base && base.isPixel) d.setProps(A, { clip: true }, 'Smart Filter');
+    d.invalidateAll();
+    this.emit('adjust');
+    this.toast('Filter layer added — change its settings any time in Properties' + (A.clip ? ' (clipped to “' + base.name + '”)' : ''), 3500);
+    return A;
   };
   App.addMaskSmart = function () {
     const d = this.doc;
@@ -780,33 +908,37 @@
       fillPattern: s.fillPattern, gradType: s.gradType, gradTo: s.gradTo, dockWidth: s.dockWidth, collapsed: s.collapsed,
       gridSize: s.gridSize, palette: App.palette, palettes: App.userPalettes, shapeFill: s.shapeFill, shapeStroke: s.shapeStroke, shapeWidth: s.shapeWidth,
       lineUseBrush: s.lineUseBrush, touchMode: s.touchMode, healSize: s.healSize, liqSize: s.liqSize, liqStrength: s.liqStrength, liqMode: s.liqMode, fillGap: s.fillGap, rulers: s.rulers,
-      rightClick: s.rightClick, favBrushes: s.favBrushes, lastPaper: s.lastPaper, harmony: s.harmony, smartAI: s.smartAI, aiModel: s.aiModel, aiRemember: s.aiRemember, aiClean: s.aiClean, toolboxMode: s.toolboxMode, toolboxCols: s.toolboxCols, toolboxPos: s.toolboxPos, recentCommands: s.recentCommands, maskView: s.maskView, maskParams: s.maskParams,
+      rightClick: s.rightClick, favBrushes: s.favBrushes, lastPaper: s.lastPaper, harmony: s.harmony, smartAI: s.smartAI, aiModel: s.aiModel, aiRemember: s.aiRemember, aiClean: s.aiClean, toolboxMode: s.toolboxMode, toolboxCols: s.toolboxCols, toolboxPos: s.toolboxPos, dockCols: s.dockCols, dockLayout: s.dockLayout, smartFilter: s.smartFilter, strokePressure: s.strokePressure, showTimeline: s.showTimeline, aiUpscaler: s.aiUpscaler, predictPoints: s.predictPoints, proofView: s.proofView, gamutWarn: s.gamutWarn, pdfDpi: s.pdfDpi, prefsRev: s.prefsRev, recentCommands: s.recentCommands, maskView: s.maskView, maskParams: s.maskParams,
     });
   }, 600);
   App.loadPrefs = function () {
     const p = ND.Store.prefs(), s = this.state;
     if (p.brush) s.brush = ND.Brush.normalise(p.brush);
-    ['brushName', 'fg', 'bg', 'recent', 'eraserSize', 'toolSettings', 'stamp', 'stampSize', 'stampMode', 'stampRandom', 'fillPattern', 'gradType', 'gradTo', 'dockWidth', 'collapsed', 'gridSize', 'shapeFill', 'shapeStroke', 'shapeWidth', 'lineUseBrush', 'touchMode', 'healSize', 'liqSize', 'liqStrength', 'liqMode', 'fillGap', 'rulers', 'rightClick', 'favBrushes', 'lastPaper', 'harmony', 'smartAI', 'aiModel', 'aiRemember', 'aiClean', 'toolboxMode', 'toolboxCols', 'toolboxPos', 'recentCommands', 'maskView', 'maskParams'].forEach((k) => { if (p[k] != null) s[k] = p[k]; });
+    ['brushName', 'fg', 'bg', 'recent', 'eraserSize', 'toolSettings', 'stamp', 'stampSize', 'stampMode', 'stampRandom', 'fillPattern', 'gradType', 'gradTo', 'dockWidth', 'collapsed', 'gridSize', 'shapeFill', 'shapeStroke', 'shapeWidth', 'lineUseBrush', 'touchMode', 'healSize', 'liqSize', 'liqStrength', 'liqMode', 'fillGap', 'rulers', 'rightClick', 'favBrushes', 'lastPaper', 'harmony', 'smartAI', 'aiModel', 'aiRemember', 'aiClean', 'toolboxMode', 'toolboxCols', 'toolboxPos', 'dockCols', 'dockLayout', 'smartFilter', 'strokePressure', 'showTimeline', 'aiUpscaler', 'predictPoints', 'proofView', 'gamutWarn', 'pdfDpi', 'recentCommands', 'maskView', 'maskParams'].forEach((k) => { if (p[k] != null) s[k] = p[k]; });
     if (p.text) Object.assign(s.text, p.text);
+    // 2.6.1 changed two defaults: rulers on, pen prediction off — apply them once to older settings
+    if (!(p.prefsRev >= 2)) { s.rulers = true; s.predictPoints = false; }
+    s.prefsRev = 2;
     if (p.palette) App.palette = p.palette;
     if (p.palettes) App.userPalettes = p.palettes;
   };
 
   /* ---------------- autosave ---------------- */
   // Only autosave when something changed, and never two at once.
+  // Every open tab is kept; only documents that changed are encoded again.
   App.autosaveNow = async function (force) {
-    if (!this.doc || this.saving || (!this.unsaved && !force)) return;
+    if (!this.doc || this.saving || (!this.unsaved && !this.tabsChanged && !force)) return;
     this.saving = true;
-    this.unsaved = false;
+    const docs = this.docs.filter((d) => !d.smartParent), changed = new Set(docs.filter((d) => d._unsaved || force || !d._autoRec));
+    docs.forEach((d) => { d._unsaved = false; });
+    this.tabsChanged = false;
     try {
-      await ND.Store.autosave(this.doc);
-      // remember the file the document belongs to, so Ctrl+S still saves there after a restart
-      ND.Store.idbSet('autosave-handle', this.doc.fileHandle || null);
+      await ND.Store.autosaveAll(docs, Math.max(0, docs.indexOf(this.doc)), changed);
       this.lastAutosave = Date.now(); this.emit('autosaved');
-    } catch (e) { this.unsaved = true; } finally { this.saving = false; }
+    } catch (e) { changed.forEach((d) => { d._unsaved = true; }); console.warn('autosave failed', e); } finally { this.saving = false; }
   };
+  Object.defineProperty(App, 'unsaved', { configurable: true, get() { return App.docs.some((d) => d._unsaved); }, set(v) { if (App.doc) App.doc._unsaved = !!v; } });
   App.on('doc', (t) => { if (t === 'history' || t === 'layers' || t === 'resize') App.unsaved = true; });
-  App.on('docchange', () => { App.unsaved = true; });
 
   ND.App = App;
 })();

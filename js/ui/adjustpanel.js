@@ -57,7 +57,24 @@
       if (q.type === 'colour') return h('label.nd-select', h('span.nd-lbl', q.label), C.colourInput(() => n.params[q.key], (v) => commit({ [q.key]: v })));
       return C.slider(q.label, { min: q.min, max: q.max, step: q.step, get: () => n.params[q.key], set: (v) => commit({ [q.key]: v }), wide: true });
     });
-    if (k.custom === 'curves') box.appendChild(P.curvesEditor(n, commit));
+    if (k.custom === 'filter') {
+      // pick any filter; its settings stay editable
+      const F = ND.Filters, sl = h('div');
+      const draw = () => {
+        U.clear(sl);
+        const f = F.byId(n.params.fid);
+        if (!f) return;
+        if (!f.params.length) sl.appendChild(h('div.nd-hint', 'This filter has no settings.'));
+        f.params.forEach((q) => {
+          const get = () => (n.params.fp && n.params.fp[q.key] != null ? n.params.fp[q.key] : q.def);
+          const set = (v) => { commit({ fp: Object.assign({}, n.params.fp, { [q.key]: v }) }); };
+          sl.appendChild(q.type === 'check' ? C.check(q.label, () => !!get(), (v) => set(v ? 1 : 0)) : C.slider(q.label, { min: q.min, max: q.max, step: q.step, get, set, wide: true }));
+        });
+      };
+      const pick = C.select('Filter', F.list.map((f) => ({ value: f.id, label: f.label, group: f.cat })), () => n.params.fid, (v) => { commit({ fid: v, fp: {} }); n.name = 'ƒ ' + F.byId(v).label; App.emit('doc', 'layers'); draw(); });
+      box.append(pick, sl, h('div.nd-hint', n.clip ? 'Clipped: filters only the layer below (a smart filter).' : 'Filters everything below. Alt+click between layers or Ctrl+Alt+G to clip it to one layer.'));
+      draw();
+    } else if (k.custom === 'curves') box.appendChild(P.curvesEditor(n, commit));
     else if (k.custom === 'levels') box.appendChild(P.levelsEditor(n, commit));
     else if (k.custom === 'tones') {
       let tone = 'mid';

@@ -1,6 +1,6 @@
 {
   "name": "neon-draw",
-  "version": "2.5.2",
+  "version": "2.7.0",
   "private": true,
   "description": "Layered painting app that runs in the browser \u2014 open index.html.",
   "scripts": {

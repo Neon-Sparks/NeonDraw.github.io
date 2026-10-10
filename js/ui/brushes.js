@@ -118,7 +118,8 @@
 
       const eng = [];
       if (e === 'spray') eng.push(sl('Density', 'density', 1, 200), sl('Particle size', 'particle', 0.2, 6, { step: 0.1 }));
-      if (e === 'watercolor') eng.push(sl('Wet edges', 'wetEdges', 0, 1, pct({ title: 'Pigment pooling at the edge when the stroke dries' })), sl('Colour bleed', 'bleed', 0, 1, pct({ title: 'Picks up and mixes the colours underneath' })));
+      if (e === 'watercolor') eng.push(sl('Wet edges', 'wetEdges', 0, 1, pct({ title: 'Pigment pooling at the edge when the stroke dries' })), sl('Colour bleed', 'bleed', 0, 1, pct({ title: 'Picks up and mixes the colours underneath' })), sl('Stays wet', 'wetTime', 0, 30, { unit: 's', title: 'Strokes painted into a wash within this time blend wet-in-wet (0 = every stroke dries at once)' }));
+      if (['watercolor', 'mixer', 'bristle'].includes(e)) eng.push(se('Colour mixing', 'mixMode', [['pigment', 'Pigment (like paint: blue + yellow = green)'], ['rgb', 'Light (screen RGB)']], 'How picked-up colours mix with the brush colour'));
       if (e === 'mixer') eng.push(sl('Mixing', 'bleed', 0, 1, pct({ title: 'How much paint is picked up from the canvas' })), sl('Paint load', 'load', 0, 5000, { title: 'Distance before the brush runs dry and only smears (0 = never)', unit: 'px' }));
       if (e === 'bristle') eng.push(sl('Bristles', 'bristles', 3, 80), sl('Paint load', 'load', 0, 8000, { title: 'How far the paint lasts before the brush goes streaky (0 = automatic)', unit: 'px' }), sl('Dryness', 'dryness', 0, 1, pct({ title: 'How broken and scratchy the stroke gets as the paint thins' })), sl('Pick-up', 'bleed', 0, 1, pct({ title: 'Bristles drag wet paint they pass through' })), sl('Splay', 'splay', 0, 1, pct({ title: 'Bristles spread apart under pressure' })));
       if (e === 'sketchy') eng.push(se('Style', 'variant', [['sketchy', 'Sketchy'], ['shaded', 'Shaded'], ['web', 'Web'], ['fur', 'Fur']]), sl('Density', 'density', 1, 60), sl('Line width', 'lineWidth', 0.5, 6, { step: 0.1 }));
@@ -171,7 +172,7 @@
           !isAuto ? C.button('Auto (' + Math.round(auto * 100) + '%)', () => { App.setBrush({ paperResponse: -1 }); renderSettings(); }, { cls: 'sm' }) : null)));
       const symm = ND.Toolbar.symmetryControls();
       symm.forEach((c) => c && ctrls.push(c));
-      settings.appendChild(grp('Stabiliser & symmetry', sl('Smoothing', 'stabilizer', 0, 0.98, pct()), ...symm,
+      settings.appendChild(grp('Stabiliser & symmetry', sl('Smoothing', 'stabilizer', 0, 1, pct()), ...symm,
         C.check('Show symmetry guides', () => App.state.showSymmetry, (v) => App.set('showSymmetry', v))));
       settings.appendChild(grp('Test pad', testPad()));
       settings.appendChild(h('div.nd-row', C.button('Reset to preset', () => { const p = App.customPresets.concat(ND.Presets.LIST).find((q) => q.name === App.state.brushName); if (p) App.loadPreset(p); }, { cls: 'sm' })));

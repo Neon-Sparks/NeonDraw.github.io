@@ -16,13 +16,22 @@ index.html            page shell, loads the scripts in order
 css/app.css           all styling (colours are CSS variables at the top)
 js/util.js            helpers (canvas, colour maths, noise, tiny DOM builder)
 js/icons.js           SVG tool and UI icons
-js/blend.js           blend modes (GPU path + per-pixel fallback)
+js/blend.js           blend modes (per-pixel maths)
+js/gpu.js             WebGL2 blending for the special blend modes (falls back to blend.js)
 js/document.js        document model: layer tree, masks, compositor, undo history, strokes
 js/effects.js         non-destructive layer styles (shadow, glow, stroke, inner shadow, bevel, overlay)
 js/adjust.js          adjustment & fill layers, curves/levels maths, histogram, Develop panel maths
 js/heal.js            spot healing / patch / content-aware fill, red-eye, Liquify
 js/selection.js       selection masks: wand, grow/shrink/border/feather, marching ants
 js/filters.js         filters (adjust, blur, enhance, edge, artistic, distort, render)
+js/fworker.js         runs filters in a background worker (filter-worker.js) when the browser allows it
+js/pigment.js         paint-like colour mixing (Kubelka-Munk): blue + yellow = green
+js/paths.js           Bézier paths and vector shape layers (geometry, drawing, sampling)
+js/colourise.js       Colourise line art (lazy brush): flats from colour scribbles
+js/anim.js            frame-by-frame animation: keyframes, motion tweening, onion skins, GIF encoder
+js/smart.js           smart objects: original + placement (matrix or warp mesh), edit contents, rasterize
+js/formats.js         TIFF open/save, PDF save, Krita .kra open/save, editable text & adjustments in PSD export
+js/colour.js          colour management: ICC profiles, CMYK print preview, gamut warning, sRGB tagging
 js/textures.js        paper grain textures used by textured brushes
 js/paper.js           paper & canvas types: tints, rendering, and how each kind of brush responds to the tooth
 js/harmony.js         colour harmony schemes and the painter's (RYB) colour wheel
@@ -44,7 +53,9 @@ js/files.js           Open / Save in place / Save as / recent files (File System
 js/viewport.js        canvas view, pointer input and tool behaviour
 js/tools2.js          heal/patch/red-eye/liquify tools, assistants, rulers & guides, quick mask overlay
 js/ui/*.js            panels: toolbar, colour, brushes, layers, dialogs, menus, plus popup.js (pop-up palette),
-                      command.js (Ctrl+K command palette) and selectmask.js (Select and Mask workspace)
+                      command.js (Ctrl+K command palette), selectmask.js (Select and Mask workspace),
+                      pen.js (Pen tool & Paths panel), colourise.js (Colourise bar), timeline.js (animation)
+                      and tabs.js (document tabs)
 js/main.js            start-up, keyboard shortcuts, drag & drop, paste, autosave
 manifest.webmanifest  app name, icons and file types for the installed app
 sw.js                 offline cache (generated — edit tools/sw-template.js instead)
@@ -73,15 +84,21 @@ The scripts are plain `<script>` files sharing one global `ND` object, not ES mo
 
 ## AI models
 
-Help ▸ AI models lists three background-removal models. They are not part of this folder: each user downloads the ones they want from Hugging Face the first time (stored in the browser, then offline).
+Help ▸ AI models lists three background-removal models and two upscalers (Image ▸ Enlarge with AI). They are not part of this folder: each user downloads the ones they want from Hugging Face the first time (stored in the browser, then offline).
 
 | Model | Best for | Download | Licence |
 | --- | --- | --- | --- |
 | ISNet (general use) | products, animals, objects, people | 179 MB | Apache 2.0, commercial use OK |
 | MODNet | people and portraits, fastest | 26 MB | Apache 2.0, commercial use OK |
 | RMBG-1.4 (BRIA) | highest quality | 176 MB | non-commercial use only |
+| Swin2SR ×2 (lightweight) | enlarging 2×, fast | 8 MB | Apache 2.0, commercial use OK |
+| Swin2SR ×4 (real-world photos) | enlarging photos 4×, removes blur and JPEG blocks | 53 MB | Apache 2.0, commercial use OK |
 
 AI needs the web or installed version; browsers block it for a file opened from disk and in the single-file build. With WebGPU (Chrome, Edge) a picture takes about a second, on the CPU 2–40 s depending on the model.
+
+## Colour and bit depth
+
+Pictures are edited in sRGB at 8 bits per channel (the browser's drawing canvas works that way). Colour management covers what matters for most work: opening RGB files with their profiles, sRGB-tagged exports, a CMYK print preview / gamut warning with your printer's ICC profile, and CMYK TIFF export. True 16 / 32-bit editing would need a different, GPU-based drawing engine.
 
 ## Releasing a new version
 

@@ -10,7 +10,7 @@
   F.supported = typeof window.showOpenFilePicker === 'function' && typeof window.showSaveFilePicker === 'function';
   const NDRAW_TYPE = { description: 'Neon Draw project', accept: { 'application/x-neondraw+json': ['.ndraw'] } };
   const OPEN_TYPES = [
-    { description: 'Projects and images', accept: { 'application/x-neondraw+json': ['.ndraw'], 'image/vnd.adobe.photoshop': ['.psd', '.psb'], 'image/openraster': ['.ora'], 'image/*': ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.avif'] } },
+    { description: 'Projects and images', accept: { 'application/x-neondraw+json': ['.ndraw'], 'image/vnd.adobe.photoshop': ['.psd', '.psb'], 'image/openraster': ['.ora'], 'application/x-krita': ['.kra'], 'image/tiff': ['.tif', '.tiff'], 'image/*': ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.avif'] } },
   ];
   const isAbort = (e) => e && (e.name === 'AbortError' || e.name === 'SecurityError');
   const isProject = (name) => /\.ndraw$/i.test(name || '');
@@ -73,6 +73,8 @@
   }
   // Ctrl+S: write back to the open .ndraw file, or ask where to save the first time.
   F.save = async function () {
+    // the contents of a smart object: saving puts them back into the layer
+    if (App.doc && App.doc.smartParent && ND.SmartObj) { App.toast(ND.SmartObj.commit(App.doc) ? 'Smart object updated' : 'No changes to put back'); return; }
     const d = App.doc;
     if (!d) return;
     if (!F.supported) return App.saveProject();

@@ -18,6 +18,10 @@
     File: () => [
       { label: 'New…', key: 'Ctrl+N', run: () => D().newDoc() },
       { label: 'Open…', key: 'Ctrl+O', run: () => ND.Files.open() },
+      { label: 'Close document', key: 'Ctrl+Alt+W', run: () => App.closeDoc() },
+      { label: 'Place image as smart object…', run: () => App.placeSmart() },
+      { label: 'Next document', key: 'Alt+PgDn', run: () => App.cycleDoc(1) },
+      { label: 'Previous document', key: 'Alt+PgUp', run: () => App.cycleDoc(-1) },
       ...recentItems(),
       { label: 'Import image as layer…', key: 'Ctrl+Shift+O', run: () => document.getElementById('nd-import').click() },
       { sep: true },
@@ -32,8 +36,13 @@
       { label: 'Export WebP', run: () => App.exportImage('webp', 0.92) },
       { label: 'Export layered PSD', run: () => App.exportPSD() },
       { label: 'Export OpenRaster (.ora — Krita/GIMP)', run: () => App.exportORA() },
+      { label: 'Export Krita (.kra)', run: () => App.exportKRA() },
+      { label: 'Export TIFF', run: () => App.exportTIFF(false) },
+      { label: 'Export CMYK TIFF (for print)', run: () => App.exportTIFF(true) },
+      { label: 'Export PDF…', run: () => D().pdf() },
       { label: 'Export active layer as PNG', run: () => App.exportLayerPNG() },
       { label: 'Export selection as PNG', run: () => App.exportSelectionPNG() },
+      { label: 'Export animation (GIF / video / PNG frames)…', run: () => ND.Timeline.exportDialog() },
       { sep: true },
       { label: 'Save autosave now', run: async () => { await App.autosaveNow(true); App.toast('Saved to browser storage'); } },
       { label: 'Clear autosave', run: async () => { await ND.Store.clearAutosave(); App.toast('Autosave cleared'); } },
@@ -61,6 +70,7 @@
     ],
     Image: [
       { label: 'Scale image…', run: () => D().scaleImage() },
+      { label: 'Enlarge with AI (2× / 4×)…', run: () => App.aiUpscale() },
       { label: 'Canvas size…', run: () => D().canvasSize() },
       { label: 'Crop to selection', run: () => App.cropToSelection() },
       { label: 'Trim transparent edges', run: () => App.trim() },
@@ -90,6 +100,12 @@
       { label: 'Merge visible', key: 'Ctrl+Shift+E', run: () => doc().mergeVisible() },
       { label: 'Group layer', key: 'Ctrl+G', run: () => doc().groupActive() },
       { label: 'Ungroup', key: 'Ctrl+Shift+G', run: () => doc().ungroupActive() },
+      { sep: true },
+      { label: 'Convert to smart object', run: () => App.convertToSmart() },
+      { label: 'Edit smart object contents', run: () => App.editSmart() },
+      { label: 'Rasterize smart object', run: () => App.rasterizeSmart() },
+      { label: 'Colourise line art (lazy brush)…', run: () => App.startColourise() },
+      { label: 'Vector shape from path', run: () => App.pathToShape() },
       { sep: true },
       { label: 'Remove background with AI…', run: () => App.aiRemoveBackground() },
       { label: 'Remove background (quick, no AI)', run: () => App.removeBackground() },
@@ -140,6 +156,7 @@
     Filter: () => {
       const items = [];
       if (App.lastFilter) items.push({ label: 'Repeat ' + ND.Filters.byId(App.lastFilter.id).label, key: 'Ctrl+F', run: () => App.applyFilter(App.lastFilter.id, App.lastFilter.params) }, { sep: true });
+      items.push({ label: 'New filter layer (editable, smart filter)', run: () => App.addFilterLayer(App.lastFilter ? App.lastFilter.id : 'blur', App.lastFilter ? App.lastFilter.params : {}, true) }, { sep: true });
       ND.Filters.CATS.forEach((c) => {
         items.push({ head: c });
         ND.Filters.list.filter((f) => f.cat === c).forEach((f) => items.push({ label: f.label + (f.params.length ? '…' : ''), run: () => D().filter(f.id) }));
@@ -165,8 +182,14 @@
       { label: '1-point perspective assistant', run: () => ND.Tools2.addPerspective(1) },
       { label: '2-point perspective assistant', run: () => ND.Tools2.addPerspective(2) },
       { label: '3-point perspective assistant', run: () => ND.Tools2.addPerspective(3) },
-      { label: 'Edit perspective guides', run: () => App.setTool('assist') },
-      { label: 'Show perspective guides', check: () => App.state.showAssist, run: () => App.set('showAssist', !App.state.showAssist) },
+      { label: 'Edit perspective guides', run: () => { App.set('showAssist', true); App.setTool('assist'); } },
+      { label: 'Show perspective guides', check: () => App.state.showAssist && doc().assistants.length > 0, run: () => {
+        if (!doc().assistants.length) { ND.Tools2.addPerspective(2); return; } // nothing to show yet: add a 2-point perspective
+        App.set('showAssist', !App.state.showAssist);
+        if (!App.state.showAssist && App.state.tool === 'assist') App.setTool('brush'); // the edit tool would show them again
+        ND.View.request();
+        App.toast(App.state.showAssist ? 'Perspective guides shown' : 'Perspective guides hidden (strokes don’t snap while hidden)');
+      } },
       { label: 'Snap strokes to perspective', check: () => App.state.snapAssist, run: () => App.set('snapAssist', !App.state.snapAssist) },
       { label: 'Remove perspective guides', run: () => ND.Tools2.clearAssistants() },
       { label: 'Wrap-around mode (seamless tiles)', key: 'Shift+W', check: () => App.state.wrap, run: () => M.toggleWrap() },
@@ -174,6 +197,14 @@
       { label: 'Reference image…', run: () => ND.Reference.open() },
       { label: 'Right-click opens the pop-up palette', check: () => App.state.rightClick !== 'pick', run: () => { App.set('rightClick', App.state.rightClick === 'pick' ? 'palette' : 'pick'); App.toast(App.state.rightClick === 'pick' ? 'Right-click now picks a colour' : 'Right-click now opens the pop-up palette (Alt+right-click picks a colour)', 3000); } },
       { label: 'Hide panels', key: 'Tab', check: () => App.state.hideUI, run: () => M.toggleUI() },
+      { label: 'Animation timeline', check: () => !!App.state.showTimeline, run: () => ND.Timeline.toggle() },
+      { head: 'Print colours' },
+      { label: 'Print preview (CMYK proof)', key: 'Ctrl+Alt+Y', check: () => !!App.state.proofView, run: () => App.toggleProof('proofView') },
+      { label: 'Gamut warning (colours that won’t print)', key: 'Ctrl+Alt+Shift+Y', check: () => !!App.state.gamutWarn, run: () => App.toggleProof('gamutWarn') },
+      { label: 'Load printer profile (.icc)…', run: () => App.loadProofProfile() },
+      { label: 'Use the built-in press profile', check: () => !ND.Colour.proof, run: () => App.resetProofProfile() },
+      { label: 'Predict pen movement (less lag)', check: () => App.state.predictPoints !== false, run: () => App.set('predictPoints', App.state.predictPoints === false) },
+      { label: 'Use graphics card for blend modes', check: () => ND.GPU.enabled, run: () => { ND.GPU.enabled = !ND.GPU.enabled; App.doc.invalidateAll(); ND.View.request(); App.toast(ND.GPU.enabled ? (ND.GPU.ok === false ? 'No WebGL2 here — blending stays on the CPU' : 'Special blend modes use the graphics card') : 'Special blend modes use the CPU'); } },
       { head: 'Tool panel' },
       { label: 'Columns: automatic (fit the window)', check: () => !(App.state.toolboxCols >= 1), run: () => { App.set('toolboxCols', 0); ND.Toolbar.layoutToolbox(); } },
       { label: '1 column', check: () => App.state.toolboxCols === 1, run: () => { App.set('toolboxCols', 1); ND.Toolbar.layoutToolbox(); } },
@@ -182,6 +213,10 @@
       { label: 'Docked on the left', check: () => (App.state.toolboxMode || 'left') === 'left', run: () => ND.Toolbar.setToolboxMode('left') },
       { label: 'Docked on the right', check: () => App.state.toolboxMode === 'right', run: () => ND.Toolbar.setToolboxMode('right') },
       { label: 'Floating (drag it by its top bar)', check: () => App.state.toolboxMode === 'float', run: () => ND.Toolbar.setToolboxMode('float') },
+      { head: 'Right panels' },
+      { label: '1 column', check: () => App.state.dockCols !== 2, run: () => ND.Dock.setCols(1) },
+      { label: '2 columns', check: () => App.state.dockCols === 2, run: () => { ND.Dock.setCols(2); if (ND.Dock.colsNow() !== 2) App.toast('Two panel columns need a window at least 1000 px wide', 3000); else App.toast('Drag a panel by its title bar to move it to the other column', 3500); } },
+      { label: 'Reset panel arrangement', run: () => ND.Dock.reset() },
       { label: 'Full screen', key: 'F11', run: () => M.fullscreen() },
       { sep: true },
       { head: 'Touch input' },
